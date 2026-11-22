@@ -1,65 +1,99 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  ClipboardCheck, 
-  Search, 
-  Plus, 
-  CheckCircle2, 
-  AlertTriangle,
+import {
+  ClipboardCheck,
+  Search,
+  Plus,
+  CheckCircle2,
   Package,
-  ArrowRight,
-  Filter,
   RefreshCw,
   Eye,
   Check,
-  X,
   FileText,
-  SlidersHorizontal,
-  Calendar,
-  Warehouse
+  Warehouse,
 } from 'lucide-react';
 import { useNavigation } from '../context/NavigationContext';
-import { useLookup } from '../context/LookupContext';
+import {
+  Button,
+  ConfirmDialog,
+  Dialog,
+  FormDialog,
+  FormField,
+  FormGrid,
+  Input,
+  Select,
+  Textarea,
+  useToast,
+} from '../components/ui';
+
+interface CountRow {
+  id: string;
+  count_number?: string;
+  warehouse_id: string;
+  warehouseName?: string;
+  count_date?: string;
+  notes?: string;
+  status?: 'DRAFT' | 'APPROVED' | string;
+}
+
+interface WarehouseRow {
+  id: string;
+  code?: string;
+  name: string;
+}
+
+const EMPTY_COUNT_FORM = {
+  warehouseId: '',
+  countDate: new Date().toISOString().split('T')[0],
+  notes: '',
+  lines: [] as Array<{ itemId: string; sku?: string; name?: string; countedQuantity: number }>,
+};
 
 export const InventoryCountsPage: React.FC = () => {
   const { navigateTo } = useNavigation();
-  const { openLookup } = useLookup();
+  const toast = useToast();
 
-  const [counts, setCounts] = useState<any[]>([]);
-  const [warehouses, setWarehouses] = useState<any[]>([]);
-  const [itemsList, setItemsList] = useState<any[]>([]);
+  const [counts, setCounts] = useState<CountRow[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [warehouseFilter, setWarehouseFilter] = useState('ALL');
 
-  // Modal State for New Count
+  // نموذج إنشاء جرد جديد — نافذة مستقلة
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newCountForm, setNewCountForm] = useState({
-    warehouseId: '',
-    countDate: new Date().toISOString().split('T')[0],
-    notes: '',
-    lines: [] as Array<{ itemId: string; sku?: string; name?: string; countedQuantity: number }>
-  });
+  const [newCountForm, setNewCountForm] = useState(EMPTY_COUNT_FORM);
+  const [formSnapshot, setFormSnapshot] = useState(JSON.stringify(EMPTY_COUNT_FORM));
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  // Selected Count Detail Modal / Workspace
-  const [selectedCount, setSelectedCount] = useState<any | null>(null);
-  const [countLines, setCountLines] = useState<any[]>([]);
+  // عرض/اعتماد محضر قائم
+  const [selectedCount, setSelectedCount] = useState<CountRow | null>(null);
   const [approving, setApproving] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [approveTarget, setApproveTarget] = useState<CountRow | null>(null);
+
+  const formDirty = showCreateModal && JSON.stringify(newCountForm) !== formSnapshot;
 
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [resCounts, resWh, resItems] = await Promise.all([
-        fetch('/api/inventory/counts').then(r => r.json()).catch(() => []),
-        fetch('/api/inventory/warehouses').then(r => r.json()).catch(() => []),
-        fetch('/api/inventory/items').then(r => r.json()).catch(() => [])
+      const [resCounts, resWh] = await Promise.all([
+        fetch('/api/inventory/counts'),
+        fetch('/api/inventory/warehouses'),
       ]);
-      setCounts(Array.isArray(resCounts) ? resCounts : []);
-      setWarehouses(Array.isArray(resWh) ? resWh : []);
-      setItemsList(Array.isArray(resItems) ? resItems : []);
-    } catch (err) {
+      if (!resCounts.ok || !resWh.ok) {
+        const failed = !resCounts.ok ? resCounts : resWh;
+        const data = await failed.json().catch(() => ({}));
+        throw new Error(data.error || `تعذر تحميل بيانات الجرد (${failed.status})`);
+      }
+      const countsData = await resCounts.json();
+      const whData = await resWh.json();
+      setCounts(Array.isArray(countsData) ? countsData : []);
+      setWarehouses(Array.isArray(whData) ? whData : []);
+      setLoadError(null);
+    } catch (err: any) {
       console.error('Error loading inventory counts:', err);
+      setLoadError(err?.message || 'تعذر الاتصال بالخادم');
     } finally {
       setLoading(false);
     }
@@ -69,12 +103,34 @@ export const InventoryCountsPage: React.FC = () => {
     fetchData();
   }, []);
 
+  const openCreate = () => {
+    const initial = { ...EMPTY_COUNT_FORM, countDate: new Date().toISOString().split('T')[0] };
+    setNewCountForm(initial);
+    setFormSnapshot(JSON.stringify(initial));
+    setFormError(null);
+    setShowCreateModal(true);
+  };
+
+  const closeCreate = () => {
+    if (saving) return;
+    setShowCreateModal(false);
+    setFormError(null);
+  };
+
   const handleCreateCount = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     if (!newCountForm.warehouseId) {
-      alert('يرجى اختيار المستودع');
+      setFormError('يرجى اختيار المستودع المستهدف قبل إنشاء المحضر.');
       return;
     }
+    if (!newCountForm.countDate) {
+      setFormError('تاريخ جلسة الجرد مطلوب.');
+      return;
+    }
+
+    setFormError(null);
+    setSaving(true);
     try {
       const res = await fetch('/api/inventory/counts', {
         method: 'POST',
@@ -83,181 +139,194 @@ export const InventoryCountsPage: React.FC = () => {
           warehouseId: newCountForm.warehouseId,
           countDate: newCountForm.countDate,
           notes: newCountForm.notes,
-          lines: newCountForm.lines.map(l => ({ itemId: l.itemId, countedQuantity: l.countedQuantity }))
-        })
+          lines: newCountForm.lines.map((l) => ({
+            itemId: l.itemId,
+            countedQuantity: l.countedQuantity,
+          })),
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشل إنشاء محضر الجرد');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFormError(data.error || `فشل إنشاء محضر الجرد (${res.status})`);
+        return; // تبقى القيم كما هي
+      }
 
       setShowCreateModal(false);
-      setNewCountForm({ warehouseId: '', countDate: new Date().toISOString().split('T')[0], notes: '', lines: [] });
-      setMessage({ text: 'تم إنشاء محضر الجرد كمسودة بنجاح', type: 'success' });
-      fetchData();
+      setNewCountForm(EMPTY_COUNT_FORM);
+      setFormSnapshot(JSON.stringify(EMPTY_COUNT_FORM));
+      toast.success('تم إنشاء محضر الجرد كمسودة', { description: data?.count_number });
+      await fetchData();
     } catch (err: any) {
-      alert(err.message);
+      setFormError(err?.message || 'تعذر الاتصال بالخادم. لم تُفقد بياناتك.');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleApproveCount = async (countId: string) => {
-    if (!confirm('هل أنت متأكد من اعتماد عملية الجرد؟ سيؤدي الاعتماد إلى توليد تسويات المخزون (فروقات الزيادة والعجز) آلياً.')) return;
+  const handleApproveCount = async (count: CountRow) => {
     try {
       setApproving(true);
-      const res = await fetch(`/api/inventory/counts/${countId}/approve`, {
+      const res = await fetch(`/api/inventory/counts/${count.id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify({}),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'فشل اعتماد الجرد');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error('فشل اعتماد الجرد', {
+          description: data.error || `رفض الخادم الطلب (${res.status})`,
+        });
+        return;
+      }
 
-      setMessage({ text: 'تم اعتماد محضر الجرد وتوليد تسويات المخزون بنجاح', type: 'success' });
+      toast.success('تم اعتماد محضر الجرد وتوليد تسويات المخزون', {
+        description: count.count_number,
+      });
+      setApproveTarget(null);
       setSelectedCount(null);
-      fetchData();
+      await fetchData();
     } catch (err: any) {
-      alert(err.message);
+      toast.error('تعذر تنفيذ الاعتماد', { description: err?.message });
     } finally {
       setApproving(false);
     }
   };
 
-  const filteredCounts = counts.filter(c => {
-    const matchesSearch = c.count_number?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          c.warehouseName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          c.notes?.toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredCounts = counts.filter((c) => {
+    const q = searchQuery.toLowerCase();
+    const matchesSearch =
+      c.count_number?.toLowerCase().includes(q) ||
+      c.warehouseName?.toLowerCase().includes(q) ||
+      c.notes?.toLowerCase().includes(q);
     const matchesStatus = statusFilter === 'ALL' || c.status === statusFilter;
     const matchesWarehouse = warehouseFilter === 'ALL' || c.warehouse_id === warehouseFilter;
     return matchesSearch && matchesStatus && matchesWarehouse;
   });
 
   const totalCounts = counts.length;
-  const draftCounts = counts.filter(c => c.status === 'DRAFT').length;
-  const approvedCounts = counts.filter(c => c.status === 'APPROVED').length;
+  const draftCounts = counts.filter((c) => c.status === 'DRAFT').length;
+  const approvedCounts = counts.filter((c) => c.status === 'APPROVED').length;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200" dir="rtl">
       {/* Top Header & Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-surface p-6 rounded-card border border-line shadow-k-xs">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-linear-to-tr from-emerald-600 to-teal-700 text-white flex items-center justify-center shadow-md shadow-emerald-500/20">
+          <div className="w-12 h-12 rounded-control bg-state-success text-white flex items-center justify-center shadow-k-xs">
             <ClipboardCheck size={24} />
           </div>
           <div>
-            <div className="flex items-center gap-2 text-xs text-slate-500 font-medium mb-1">
-              <button onClick={() => navigateTo('/')} className="hover:text-blue-900 transition-colors">الرئيسية</button>
+            <div className="flex items-center gap-2 text-xs text-ink-muted font-medium mb-1">
+              <button onClick={() => navigateTo('/')} className="hover:text-brand transition-colors">الرئيسية</button>
               <span>&gt;</span>
               <span>المخزون</span>
               <span>&gt;</span>
-              <span className="text-slate-800 font-bold">الجرد الفعلي</span>
+              <span className="text-ink font-bold">الجرد الفعلي</span>
             </div>
-            <h1 className="text-xl font-black text-slate-800 font-cairo">الجرد الفعلي للمخزون (Inventory Count Management)</h1>
-            <p className="text-xs text-slate-500">إنشاء وإدارة عمليات الجرد الفعلي ومطابقة الكميات مع الرصيد الدفتري وتنفيذ تسويات المخزون</p>
+            <h1 className="text-xl font-black text-ink">الجرد الفعلي للمخزون (Inventory Count Management)</h1>
+            <p className="text-xs text-ink-muted">إنشاء وإدارة عمليات الجرد الفعلي ومطابقة الكميات مع الرصيد الدفتري وتنفيذ تسويات المخزون</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button 
-            onClick={() => fetchData()}
-            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors"
-          >
-            <RefreshCw size={14} />
-            <span>تحديث</span>
-          </button>
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-2 transition-all"
-          >
-            <Plus size={16} />
-            <span>+ إنشاء جرد جديد</span>
-          </button>
+          <Button variant="secondary" icon={<RefreshCw size={14} />} onClick={fetchData} loading={loading}>
+            تحديث
+          </Button>
+          <Button variant="primary" icon={<Plus size={16} />} onClick={openCreate}>
+            إنشاء جرد جديد
+          </Button>
         </div>
       </div>
 
-      {message && (
-        <div className={`p-4 rounded-xl text-xs font-bold flex items-center gap-2 ${
-          message.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
-        }`}>
-          <CheckCircle2 size={16} />
-          <span>{message.text}</span>
+      {loadError && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-state-danger/40 bg-state-danger-soft px-4 py-3 text-[13px] font-semibold text-ink-danger">
+          <span>{loadError}</span>
+          <Button variant="secondary" size="sm" onClick={fetchData}>
+            إعادة المحاولة
+          </Button>
         </div>
       )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
+        <div className="bg-surface p-5 rounded-card border border-line shadow-k-xs flex items-center justify-between">
           <div>
-            <span className="text-xs font-semibold text-slate-500">إجمالي عمليات الجرد</span>
-            <p className="text-2xl font-black text-slate-900 mt-1 font-mono">{totalCounts}</p>
-            <span className="text-[11px] text-slate-400">جميع المحاضر المسجلة</span>
+            <span className="text-xs font-semibold text-ink-muted">إجمالي عمليات الجرد</span>
+            <p className="text-2xl font-black text-ink mt-1 font-mono">{totalCounts}</p>
+            <span className="text-[11px] text-ink-muted">جميع المحاضر المسجلة</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
-            <ClipboardCheck size={20} />
+          <div className="w-10 h-10 rounded-control bg-brand-soft text-brand flex items-center justify-center">
+            <ClipboardCheck size={20} aria-hidden="true" />
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
+        <div className="bg-surface p-5 rounded-card border border-line shadow-k-xs flex items-center justify-between">
           <div>
-            <span className="text-xs font-semibold text-slate-500">المسودات قيد الإعداد</span>
-            <p className="text-2xl font-black text-amber-700 mt-1 font-mono">{draftCounts}</p>
-            <span className="text-[11px] text-amber-600">تحتاج إدخال كميات أو اعتماد</span>
+            <span className="text-xs font-semibold text-ink-muted">المسودات قيد الإعداد</span>
+            <p className="text-2xl font-black text-ink-warning mt-1 font-mono">{draftCounts}</p>
+            <span className="text-[11px] text-ink-warning">تحتاج إدخال كميات أو اعتماد</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center">
-            <FileText size={20} />
+          <div className="w-10 h-10 rounded-control bg-state-warning-soft text-ink-warning flex items-center justify-center">
+            <FileText size={20} aria-hidden="true" />
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
+        <div className="bg-surface p-5 rounded-card border border-line shadow-k-xs flex items-center justify-between">
           <div>
-            <span className="text-xs font-semibold text-slate-500">المحاضر المعتمَدة</span>
-            <p className="text-2xl font-black text-emerald-700 mt-1 font-mono">{approvedCounts}</p>
-            <span className="text-[11px] text-emerald-600">تم تنفيذ تسويات المخزون المرتبطة</span>
+            <span className="text-xs font-semibold text-ink-muted">المحاضر المعتمَدة</span>
+            <p className="text-2xl font-black text-ink-success mt-1 font-mono">{approvedCounts}</p>
+            <span className="text-[11px] text-ink-success">تم تنفيذ تسويات المخزون المرتبطة</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-            <CheckCircle2 size={20} />
+          <div className="w-10 h-10 rounded-control bg-state-success-soft text-ink-success flex items-center justify-center">
+            <CheckCircle2 size={20} aria-hidden="true" />
           </div>
         </div>
       </div>
 
       {/* Filter Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="bg-surface p-4 rounded-card border border-line shadow-k-xs flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="relative w-full md:w-80">
-          <Search size={16} className="absolute right-3.5 top-3 text-slate-400" />
-          <input 
-            type="text"
+          <Search size={16} className="absolute right-3.5 top-3 text-ink-muted" aria-hidden="true" />
+          <Input
+            type="search"
             placeholder="بحث برقم الجرد أو المستودع..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pr-10 pl-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-blue-900"
+            className="pr-10 text-xs"
+            aria-label="بحث في محاضر الجرد"
           />
         </div>
 
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-          <select 
+          <Select
             value={warehouseFilter}
             onChange={(e) => setWarehouseFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700"
-          >
-            <option value="ALL">جميع المستودعات</option>
-            {warehouses.map(w => (
-              <option key={w.id} value={w.id}>{w.name}</option>
-            ))}
-          </select>
+            className="w-48 text-xs"
+            aria-label="تصفية حسب المستودع"
+            options={[
+              { value: 'ALL', label: 'جميع المستودعات' },
+              ...warehouses.map((w) => ({ value: w.id, label: w.name })),
+            ]}
+          />
 
-          <select 
+          <Select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700"
-          >
-            <option value="ALL">جميع الحالات</option>
-            <option value="DRAFT">مسودة (Draft)</option>
-            <option value="APPROVED">معتمد (Approved)</option>
-          </select>
+            className="w-44 text-xs"
+            aria-label="تصفية حسب الحالة"
+            options={[
+              { value: 'ALL', label: 'جميع الحالات' },
+              { value: 'DRAFT', label: 'مسودة (Draft)' },
+              { value: 'APPROVED', label: 'معتمد (Approved)' },
+            ]}
+          />
         </div>
       </div>
 
       {/* Real Data Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+      <div className="bg-surface rounded-card border border-line overflow-hidden shadow-k-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-right text-xs">
-            <thead className="bg-slate-900 text-white font-bold">
+            <thead className="bg-surface-sunken text-ink font-bold">
               <tr>
                 <th className="py-3 px-4">رقم محضر الجرد</th>
                 <th className="py-3 px-4">المستودع</th>
@@ -267,68 +336,74 @@ export const InventoryCountsPage: React.FC = () => {
                 <th className="py-3 px-4 text-center">الإجراءات</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredCounts.length === 0 ? (
+            <tbody className="divide-y divide-line">
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-ink-muted">
+                    جاري تحميل محاضر الجرد...
+                  </td>
+                </tr>
+              ) : filteredCounts.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-16 text-center">
                     <div className="flex flex-col items-center justify-center space-y-3">
-                      <div className="w-16 h-16 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center">
-                        <ClipboardCheck size={32} />
+                      <div className="w-16 h-16 rounded-card bg-surface-sunken text-ink-muted flex items-center justify-center">
+                        <ClipboardCheck size={32} aria-hidden="true" />
                       </div>
-                      <div className="text-sm font-bold text-slate-700">لا توجد عمليات جرد مطابقة للبحث</div>
-                      <p className="text-xs text-slate-400">لم يتم إنشاء أي محضر جرد أو لم يتم العثور على نتائج تطابق معايير التصفية</p>
-                      <button 
-                        onClick={() => setShowCreateModal(true)}
-                        className="px-4 py-2 bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm hover:bg-emerald-800 flex items-center gap-1.5 mt-2"
-                      >
-                        <Plus size={14} />
-                        <span>+ إنشاء أول عملية جرد</span>
-                      </button>
+                      <div className="text-sm font-bold text-ink">لا توجد عمليات جرد مطابقة للبحث</div>
+                      <p className="text-xs text-ink-muted">
+                        لم يتم إنشاء أي محضر جرد أو لم يتم العثور على نتائج تطابق معايير التصفية
+                      </p>
+                      <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={openCreate} className="mt-2">
+                        إنشاء أول عملية جرد
+                      </Button>
                     </div>
                   </td>
                 </tr>
               ) : (
                 filteredCounts.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 px-4 font-mono font-bold text-emerald-800">
-                      {c.count_number}
+                  <tr key={c.id} className="hover:bg-surface-hover transition-colors">
+                    <td className="py-3.5 px-4 font-mono font-bold text-ink-success">{c.count_number}</td>
+                    <td className="py-3.5 px-4 font-bold text-ink">
+                      <span className="flex items-center gap-1.5">
+                        <Warehouse size={14} className="text-ink-muted" aria-hidden="true" />
+                        <span>{c.warehouseName || c.warehouse_id}</span>
+                      </span>
                     </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-800 flex items-center gap-1.5">
-                      <Warehouse size={14} className="text-slate-400" />
-                      <span>{c.warehouseName || c.warehouse_id}</span>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-600">
+                    <td className="py-3.5 px-4 font-mono text-ink-muted">
                       {c.count_date ? new Date(c.count_date).toLocaleDateString('ar-YE') : '—'}
                     </td>
-                    <td className="py-3.5 px-4 text-slate-600 truncate max-w-xs">
-                      {c.notes || '—'}
-                    </td>
+                    <td className="py-3.5 px-4 text-ink-muted truncate max-w-xs">{c.notes || '—'}</td>
                     <td className="py-3.5 px-4 text-center">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                        c.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-200'
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-pill text-[10px] font-bold ${
+                        c.status === 'APPROVED'
+                          ? 'bg-state-success-soft text-ink-success border border-state-success/30'
+                          : 'bg-state-warning-soft text-ink-warning border border-state-warning/30'
                       }`}>
-                        {c.status === 'APPROVED' ? <CheckCircle2 size={11} /> : <FileText size={11} />}
+                        {c.status === 'APPROVED' ? <CheckCircle2 size={11} aria-hidden="true" /> : <FileText size={11} aria-hidden="true" />}
                         <span>{c.status === 'APPROVED' ? 'معتمد' : 'مسودة'}</span>
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-center">
                       <div className="flex items-center justify-center gap-2">
-                        <button 
+                        <Button
+                          variant="secondary"
+                          size="xs"
+                          icon={<Eye size={13} />}
                           onClick={() => setSelectedCount(c)}
-                          className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-900 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors"
                         >
-                          <Eye size={13} />
-                          <span>عرض / إدارة</span>
-                        </button>
+                          عرض / إدارة
+                        </Button>
                         {c.status !== 'APPROVED' && (
-                          <button 
-                            onClick={() => handleApproveCount(c.id)}
+                          <Button
+                            variant="success"
+                            size="xs"
+                            icon={<Check size={13} />}
+                            onClick={() => setApproveTarget(c)}
                             disabled={approving}
-                            className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs flex items-center gap-1 transition-colors shadow-xs"
                           >
-                            <Check size={13} />
-                            <span>اعتماد</span>
-                          </button>
+                            اعتماد
+                          </Button>
                         )}
                       </div>
                     </td>
@@ -340,136 +415,144 @@ export const InventoryCountsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Create Count Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center border-b pb-4">
-              <h3 className="text-lg font-bold text-slate-900 font-cairo">إنشاء عملية جرد جديدة (Stock Count)</h3>
-              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
-            </div>
-            
-            <form onSubmit={handleCreateCount} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اختر المستودع المستهدف *</label>
-                <select 
-                  value={newCountForm.warehouseId}
-                  onChange={(e) => setNewCountForm({ ...newCountForm, warehouseId: e.target.value })}
-                  required
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium"
-                >
-                  <option value="">-- اختر المستودع --</option>
-                  {warehouses.map(w => (
-                    <option key={w.id} value={w.id}>{w.code} - {w.name}</option>
-                  ))}
-                </select>
-              </div>
+      {/* نافذة مستقلة: إنشاء محضر جرد */}
+      <FormDialog
+        open={showCreateModal}
+        onClose={closeCreate}
+        title="إنشاء عملية جرد جديدة (Stock Count)"
+        description="سيتم إنشاء المحضر كمسودة، ثم تُدخل الكميات الفعلية قبل الاعتماد."
+        icon={<ClipboardCheck size={19} />}
+        size="lg"
+        submitLabel="إنشاء المسودة الآن"
+        submitLoadingLabel="جارٍ الإنشاء..."
+        submitting={saving}
+        dirty={formDirty}
+        error={formError}
+        onSubmit={handleCreateCount}
+        footerNote="لن يُنشأ أي تسوية مخزون قبل الاعتماد النهائي."
+      >
+        <FormGrid cols={2}>
+          <FormField label="المستودع المستهدف" required className="md:col-span-2">
+            <Select
+              value={newCountForm.warehouseId}
+              onChange={(e) => setNewCountForm({ ...newCountForm, warehouseId: e.target.value })}
+              placeholder="— اختر المستودع —"
+              options={warehouses.map((w) => ({
+                value: w.id,
+                label: `${w.code ? `${w.code} - ` : ''}${w.name}`,
+              }))}
+            />
+          </FormField>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">تاريخ جلسة الجرد *</label>
-                <input 
-                  type="date"
-                  value={newCountForm.countDate}
-                  onChange={(e) => setNewCountForm({ ...newCountForm, countDate: e.target.value })}
-                  required
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium"
-                />
-              </div>
+          <FormField label="تاريخ جلسة الجرد" required>
+            <Input
+              type="date"
+              value={newCountForm.countDate}
+              onChange={(e) => setNewCountForm({ ...newCountForm, countDate: e.target.value })}
+            />
+          </FormField>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">ملاحظات أو سبب الجرد</label>
-                <textarea 
-                  rows={3}
-                  value={newCountForm.notes}
-                  onChange={(e) => setNewCountForm({ ...newCountForm, notes: e.target.value })}
-                  placeholder="مثال: جرد دوري نهاية النصف الأول من السنة..."
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium"
-                />
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl text-[11px] text-blue-900 leading-relaxed">
-                ملاحظة: سيتم إنشاء محضر الجرد بحالة <strong>مسودة</strong>، وسيتمكن أمين المستودع من إدخال الكميات الفعلية ومطابقتها قبل الاعتماد النهائي الذي يولد التسويات الدفترية.
-              </div>
-
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <button 
-                  type="button" 
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200"
-                >
-                  إلغاء
-                </button>
-                <button 
-                  type="submit"
-                  className="px-6 py-2 bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md hover:bg-emerald-800"
-                >
-                  إنشاء المسودة الآن
-                </button>
-              </div>
-            </form>
+          <div className="md:col-span-2">
+            <FormField label="ملاحظات أو سبب الجرد" hint="اختياري — يظهر في المحضر والتقارير">
+              <Textarea
+                rows={3}
+                value={newCountForm.notes}
+                onChange={(e) => setNewCountForm({ ...newCountForm, notes: e.target.value })}
+                placeholder="مثال: جرد دوري نهاية النصف الأول من السنة..."
+                maxLength={400}
+              />
+            </FormField>
           </div>
-        </div>
-      )}
 
-      {/* Selected Count Workspace Modal */}
-      {selectedCount && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center border-b pb-4">
-              <div>
-                <span className="text-xs font-mono font-bold text-emerald-800">{selectedCount.count_number}</span>
-                <h3 className="text-lg font-bold text-slate-900 font-cairo">تفاصيل محضر الجرد التشغيلي</h3>
-              </div>
-              <button onClick={() => setSelectedCount(null)} className="text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
-            </div>
+          <div className="md:col-span-2 rounded-control border border-line bg-brand-soft p-3 text-[11px] leading-relaxed text-ink">
+            ملاحظة: سيتم إنشاء محضر الجرد بحالة <strong>مسودة</strong>، وسيتمكن أمين المستودع من إدخال الكميات
+            الفعلية ومطابقتها قبل الاعتماد النهائي الذي يولد التسويات الدفترية.
+          </div>
+        </FormGrid>
+      </FormDialog>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs bg-slate-50 p-4 rounded-xl border">
+      {/* عرض/إدارة محضر قائم — للعرض فقط، والاعتماد إجراء منفصل مؤكد */}
+      <Dialog
+        open={Boolean(selectedCount)}
+        onClose={() => setSelectedCount(null)}
+        title="تفاصيل محضر الجرد التشغيلي"
+        description={selectedCount?.count_number ? `رقم المحضر: ${selectedCount.count_number}` : undefined}
+        icon={<Package size={19} />}
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setSelectedCount(null)}>
+              إغلاق
+            </Button>
+            {selectedCount && selectedCount.status !== 'APPROVED' && (
+              <Button
+                variant="success"
+                icon={<CheckCircle2 size={15} />}
+                onClick={() => setApproveTarget(selectedCount)}
+                disabled={approving}
+              >
+                اعتماد المحضر وتوليد تسويات المخزون
+              </Button>
+            )}
+          </>
+        }
+      >
+        {selectedCount && (
+          <div className="space-y-4 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 bg-surface-muted p-4 rounded-control border border-line">
               <div>
-                <span className="text-slate-400 block">المستودع:</span>
-                <strong className="text-slate-800">{selectedCount.warehouseName || selectedCount.warehouse_id}</strong>
+                <span className="text-ink-muted block">المستودع:</span>
+                <strong className="text-ink">{selectedCount.warehouseName || selectedCount.warehouse_id}</strong>
               </div>
               <div>
-                <span className="text-slate-400 block">تاريخ الجرد:</span>
-                <strong className="text-slate-800 font-mono">{selectedCount.count_date ? new Date(selectedCount.count_date).toLocaleDateString('ar-YE') : '—'}</strong>
+                <span className="text-ink-muted block">تاريخ الجرد:</span>
+                <strong className="text-ink font-mono">
+                  {selectedCount.count_date
+                    ? new Date(selectedCount.count_date).toLocaleDateString('ar-YE')
+                    : '—'}
+                </strong>
               </div>
               <div>
-                <span className="text-slate-400 block">الحالة:</span>
-                <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${selectedCount.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                  {selectedCount.status}
+                <span className="text-ink-muted block">الحالة:</span>
+                <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                  selectedCount.status === 'APPROVED'
+                    ? 'bg-state-success-soft text-ink-success'
+                    : 'bg-state-warning-soft text-ink-warning'
+                }`}>
+                  {selectedCount.status === 'APPROVED' ? 'معتمد' : 'مسودة'}
                 </span>
               </div>
             </div>
 
             <div className="space-y-2">
-              <h4 className="font-bold text-xs text-slate-700">ملاحظات المحضر:</h4>
-              <p className="text-xs text-slate-600 bg-white border p-3 rounded-xl">{selectedCount.notes || 'لا توجد ملاحظات إضافية'}</p>
-            </div>
-
-            <div className="flex justify-between items-center pt-4 border-t">
-              <button 
-                onClick={() => setSelectedCount(null)}
-                className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200"
-              >
-                إغلاق
-              </button>
-              {selectedCount.status !== 'APPROVED' && (
-                <button 
-                  onClick={() => handleApproveCount(selectedCount.id)}
-                  disabled={approving}
-                  className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-2"
-                >
-                  <CheckCircle2 size={15} />
-                  <span>اعتماد المحضر وتوليد تسويات المخزون</span>
-                </button>
-              )}
+              <h4 className="font-bold text-xs text-ink">ملاحظات المحضر:</h4>
+              <p className="text-xs text-ink bg-surface-muted border border-line p-3 rounded-control">
+                {selectedCount.notes || 'لا توجد ملاحظات إضافية'}
+              </p>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Dialog>
+
+      {/* تأكيد الاعتماد — يذكر رقم المحضر والمستودع */}
+      <ConfirmDialog
+        open={Boolean(approveTarget)}
+        tone="warning"
+        busy={approving}
+        title="تأكيد اعتماد محضر الجرد"
+        message={
+          <>
+            سيتم اعتماد المحضر <strong>{approveTarget?.count_number}</strong> للمستودع{' '}
+            <strong>{approveTarget?.warehouseName || approveTarget?.warehouse_id}</strong>، وسيولّد النظام
+            تسويات المخزون (فروقات الزيادة والعجز) آلياً. لا يمكن التراجع عن الاعتماد.
+          </>
+        }
+        confirmLabel="اعتماد وتوليد التسويات"
+        onCancel={() => setApproveTarget(null)}
+        onConfirm={async () => {
+          if (approveTarget) await handleApproveCount(approveTarget);
+        }}
+      />
     </div>
   );
 };

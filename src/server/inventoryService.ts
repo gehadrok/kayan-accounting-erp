@@ -2,6 +2,7 @@ import { getDb } from './db.ts';
 import { logAudit } from './auditService.ts';
 import { AccountingService } from './accountingService.ts';
 import { SettingsService } from './settingsService.ts';
+import { round2, round4 } from './money.ts';
 
 export interface CreateItemDto {
   sku: string;
@@ -29,6 +30,14 @@ export interface StockTransactionLineDto {
   locationId?: string;
   batchId?: string;
   serialNumber?: string;
+  /**
+   * PHASE 9.4.4 — explicit line total override. Honored ONLY together with
+   * valuationPolicy 'EXACT_COST' on a PURCHASE_RECEIPT (the exact invoice
+   * line net in 2dp money, matching the journal). The stored unit_cost then
+   * becomes informational (round4 of the unit); total_cost is authoritative
+   * for both persistence and ledger replay.
+   */
+  totalCost?: number;
 }
 
 export interface CreateStockTransactionDto {
@@ -52,6 +61,19 @@ export interface CreateStockTransactionDto {
   companyId?: string;
   branchId?: string;
   userId?: string;
+  /**
+   * PHASE 9.4 — explicit valuation discriminator (persisted per movement).
+   * 'ORIGINAL_COST' is honored ONLY for RETURN_OUT linked to an original
+   * purchase invoice line (valued at that line's net unit cost after
+   * discount). 'TRANSFER_COST' is honored ONLY for TRANSFER_OUT/TRANSFER_IN
+   * legs created together by createStockTransfer (both legs persist the same
+   * value at NUMERIC precision). 'EXACT_COST' is honored ONLY for
+   * PURCHASE_RECEIPT lines carrying an explicit totalCost (the exact invoice
+   * line net — replay consumes the stored total, not qty x rounded unit).
+   * Every other movement uses 'WAC'. Never inferred from free-text reference
+   * fields; legacy NULL rows follow WAC.
+   */
+  valuationPolicy?: 'WAC' | 'ORIGINAL_COST' | 'TRANSFER_COST' | 'EXACT_COST';
 }
 
 export interface CreateTransferDto {
@@ -132,16 +154,66 @@ export class InventoryService {
     return res.rows[0];
   }
 
-  static async getWarehouses() {
+  /**
+   * Warehouse master listing.
+   *
+   * HOTFIX (purchase receipt / warehouse selection):
+   * - `activeOnly` filters out deactivated warehouses so operational screens
+   *   (purchase + sales invoice forms) can never offer a warehouse that a
+   *   posting would later reject. Master-data screens keep the full list.
+   * - ORDER BY is now `created_at ASC, id ASC`. Seeded warehouses share one
+   *   `created_at` value, so the previous `ORDER BY created_at ASC` alone left
+   *   the row order unspecified and let the purchase default and the sales
+   *   default land on DIFFERENT warehouses. `id` is a unique tiebreaker, so
+   *   every caller now resolves the same row from the same ordering rule.
+   */
+  static async getWarehouses(activeOnly = false) {
     const db = await getDb();
     const res = await db.query<any>(`
       SELECT w.*, b.name as "branchName", a.name as "inventoryAccountName"
       FROM inventory.warehouses w
       LEFT JOIN core.branches b ON b.id = w.branch_id
       LEFT JOIN accounting.accounts a ON a.id = w.inventory_account_id
-      ORDER BY w.created_at ASC
+      ${activeOnly ? 'WHERE w.is_active = TRUE' : ''}
+      ORDER BY w.created_at ASC, w.code ASC, w.id ASC
     `);
     return res.rows;
+  }
+
+  /**
+   * HOTFIX: single deterministic definition of "the default active warehouse",
+   * shared by purchase receipts, sales issues and both return flows so a
+   * document can never be received in one warehouse and issued from another.
+   * Returns null when no active warehouse exists.
+   *
+   * PHASE 10.0.2 — ordering is `created_at, code, id`. The seeded warehouses
+   * WH-01 and WH-02 are inserted inside one DO block and therefore share the
+   * SAME `created_at`, so `created_at` alone is not a total order: PostgreSQL
+   * was free to return either row, and the choice varied between runs. `code`
+   * is a unique human-readable key that breaks that tie deterministically, so
+   * every caller — the purchase receipt, the sales issue and any test setup
+   * that mirrors this query — resolves the SAME warehouse every time.
+   */
+  static async getDefaultActiveWarehouse(): Promise<string | null> {
+    const db = await getDb();
+    const res = await db.query<any>(
+      'SELECT id FROM inventory.warehouses WHERE is_active = TRUE ORDER BY created_at ASC, code ASC, id ASC LIMIT 1'
+    );
+    return res.rows[0]?.id || null;
+  }
+
+  /**
+   * HOTFIX: authoritative server-side warehouse guard. A posting may only
+   * target a warehouse that exists AND is active; returns the id or throws a
+   * caller-supplied, context-specific message.
+   */
+  static async requireActiveWarehouse(warehouseId: string, errorMessage: string): Promise<string> {
+    const db = await getDb();
+    const res = await db.query<any>('SELECT id FROM inventory.warehouses WHERE id = $1 AND is_active = TRUE', [warehouseId]);
+    if (res.rows.length === 0) {
+      throw new Error(errorMessage);
+    }
+    return res.rows[0].id;
   }
 
   static async createWarehouse(dto: { code: string; name: string; address?: string; branchId?: string; inventoryAccountId?: string; companyId?: string }) {
@@ -449,8 +521,21 @@ export class InventoryService {
   // ==========================================
 
   /**
-   * Calculates current stock and perpetual Weighted Average Cost (WAC)
-   * strictly from posted stock transactions.
+   * Calculates current stock and perpetual valuation strictly from posted
+   * stock transactions.
+   *
+   * PHASE 9.4 valuation policy:
+   * - Inflows recalibrate the weighted average (unchanged).
+   * - Ordinary outflows (SALES_ISSUE, TRANSFER_OUT, ADJUSTMENT_OUT,
+   *   unlinked RETURN_OUT) consume stock at the running average cost (WAC).
+   * - Linked purchase returns (movement valuation_policy = 'ORIGINAL_COST')
+   *   reduce the remaining value by their PERSISTED total_cost (original
+   *   invoice line net after discount), and the average is recomputed from
+   *   the remaining value. Legacy rows (valuation_policy NULL) follow WAC.
+   * PHASE 9.5.1 note: called WITHOUT warehouseId, the returned averageCost
+   * is a derived global indicator (total value / total quantity) for reports
+   * only — postings must always use the SELLING/RECEIVING warehouse average,
+   * never this global figure as a substitute.
    */
   static async getItemStock(itemId: string, warehouseId?: string) {
     const db = await getDb();
@@ -459,6 +544,7 @@ export class InventoryService {
         tx.transaction_type,
         tx.transaction_date,
         tx.created_at,
+        tx.valuation_policy as "valuationPolicy",
         l.quantity,
         l.unit_cost,
         l.total_cost
@@ -491,18 +577,53 @@ export class InventoryService {
     for (const row of res.rows) {
       const qty = parseFloat(row.quantity);
       const cost = parseFloat(row.unit_cost || '0');
+      // Explicit policy checks — never inferred from reference text.
+      // TRANSFER_COST legs (either direction) and EXACT_COST receipts replay
+      // their PERSISTED total_cost so both legs of one transfer cancel exactly
+      // and receipts match their journals exactly.
+      const policy = row.valuationPolicy as string | null;
+      const isTransferLeg = policy === 'TRANSFER_COST';
+      const isExactCostReceipt = policy === 'EXACT_COST';
+      const isFixedCostReturn = policy === 'ORIGINAL_COST' && !inflowTypes.includes(row.transaction_type);
 
-      if (inflowTypes.includes(row.transaction_type)) {
+      if (isTransferLeg || isExactCostReceipt) {
+        const storedTotal = parseFloat(row.total_cost || '0');
+        if (inflowTypes.includes(row.transaction_type)) {
+          runningVal += storedTotal;
+          runningQty += qty;
+        } else {
+          runningQty -= qty;
+          runningVal -= storedTotal;
+        }
+        if (runningQty > 0) {
+          avgCost = runningVal / runningQty;
+        }
+      } else if (inflowTypes.includes(row.transaction_type)) {
         // Inflow increases stock and recalibrates weighted average cost
         runningVal = (runningQty * avgCost) + (qty * cost);
         runningQty += qty;
         if (runningQty > 0) {
           avgCost = runningVal / runningQty;
         }
-      } else {
-        // Outflow decreases stock at current average cost
+      } else if (isFixedCostReturn) {
+        // Linked purchase return: remove the persisted original net value.
+        const storedTotal = parseFloat(row.total_cost || '0');
         runningQty -= qty;
-        runningVal = runningQty * avgCost;
+        runningVal -= storedTotal;
+        if (runningQty > 0) {
+          avgCost = runningVal / runningQty;
+        }
+      } else {
+        // PHASE 9.5.1: ordinary outflows consume their POSTED stored total so
+        // that global replay always agrees with per-warehouse replay and with
+        // the journal (all three built from the same posting-scope snapshot).
+        // Single-warehouse histories are unaffected (stored == recomputed
+        // there, so the average is still constant across ordinary outflows).
+        runningQty -= qty;
+        runningVal -= parseFloat(row.total_cost || '0');
+        if (runningQty > 0) {
+          avgCost = runningVal / runningQty;
+        }
       }
     }
 
@@ -533,6 +654,7 @@ export class InventoryService {
         tx.transaction_type as "transactionType",
         tx.transaction_date as "transactionDate",
         tx.reference_type as "referenceType",
+        tx.valuation_policy as "valuationPolicy",
         tx.notes as "notes",
         w.name as "warehouseName",
         l.quantity,
@@ -563,21 +685,50 @@ export class InventoryService {
       const qty = parseFloat(row.quantity);
       const cost = parseFloat(row.unitCost || '0');
       const isInflow = inflowTypes.includes(row.transactionType);
+      // Same explicit policies as getItemStock (legacy NULL => WAC).
+      const policy = row.valuationPolicy as string | null;
+      const isTransferLeg = policy === 'TRANSFER_COST';
+      const isExactCostReceipt = policy === 'EXACT_COST';
+      const isFixedCostReturn = policy === 'ORIGINAL_COST' && !isInflow;
 
       let inQty = 0;
       let outQty = 0;
 
-      if (isInflow) {
+      if (isTransferLeg || isExactCostReceipt) {
+        const storedTotal = parseFloat(row.totalCost || '0');
+        if (isInflow) {
+          inQty = qty;
+          runningVal += storedTotal;
+          runningStock += qty;
+        } else {
+          outQty = qty;
+          runningStock -= qty;
+          runningVal -= storedTotal;
+        }
+        if (runningStock > 0) {
+          avgCost = runningVal / runningStock;
+        }
+      } else if (isInflow) {
         inQty = qty;
         runningVal = (runningStock * avgCost) + (qty * cost);
         runningStock += qty;
         if (runningStock > 0) {
           avgCost = runningVal / runningStock;
         }
+      } else if (isFixedCostReturn) {
+        outQty = qty;
+        runningStock -= qty;
+        runningVal -= parseFloat(row.totalCost || '0');
+        if (runningStock > 0) {
+          avgCost = runningVal / runningStock;
+        }
       } else {
         outQty = qty;
         runningStock -= qty;
-        runningVal = runningStock * avgCost;
+        runningVal -= parseFloat(row.totalCost || '0');
+        if (runningStock > 0) {
+          avgCost = runningVal / runningStock;
+        }
       }
 
       return {
@@ -588,7 +739,7 @@ export class InventoryService {
         runningStock,
         unitCost: cost > 0 ? cost : avgCost,
         currentAvgCost: avgCost,
-        runningValue: runningStock * avgCost,
+        runningValue: runningVal,
       };
     });
 
@@ -597,7 +748,7 @@ export class InventoryService {
       entries,
       finalStock: runningStock,
       finalAverageCost: avgCost,
-      finalValue: runningStock * avgCost,
+      finalValue: runningVal,
     };
   }
 
@@ -676,6 +827,28 @@ export class InventoryService {
 
     const outflowTypes = ['SALES_ISSUE', 'TRANSFER_OUT', 'ADJUSTMENT_OUT', 'RETURN_OUT'];
     const isOutflow = outflowTypes.includes(dto.transactionType);
+    // PHASE 9.4: narrowly scoped exception — ONLY a RETURN_OUT explicitly
+    // flagged ORIGINAL_COST keeps its caller-supplied unit cost (original
+    // invoice line net after discount). All other outflows keep WAC.
+    const isFixedCostReturn = dto.transactionType === 'RETURN_OUT' && dto.valuationPolicy === 'ORIGINAL_COST';
+    // PHASE 9.4.1: transfer legs created together by createStockTransfer carry
+    // the SAME caller-supplied value on both legs (persisted at NUMERIC
+    // precision) so replay cancels exactly. Never applied ad hoc.
+    const isTransferCostLeg =
+      (dto.transactionType === 'TRANSFER_OUT' || dto.transactionType === 'TRANSFER_IN') &&
+      dto.valuationPolicy === 'TRANSFER_COST';
+    if (isTransferCostLeg && dto.lines.some((l) => l.unitCost === undefined || l.unitCost === null)) {
+      throw new Error('حركة التحويل بسياسة TRANSFER_COST تتطلب تكلفة وحدة صريحة لكل سطر');
+    }
+    // PHASE 9.4.4: exact-cost receipts carry the invoice line net (2dp money)
+    // as an explicit total so the movement matches the journal exactly instead
+    // of re-deriving it from a 4dp-rounded unit (which breaks reconciliation
+    // past 0.001 for large quantities with fractional nets). Never applied
+    // outside PURCHASE_RECEIPT; legacy receipts without the flag keep WAC.
+    const isExactCostReceipt = dto.transactionType === 'PURCHASE_RECEIPT' && dto.valuationPolicy === 'EXACT_COST';
+    if (isExactCostReceipt && dto.lines.some((l) => l.totalCost === undefined || l.totalCost === null)) {
+      throw new Error('استلام المشتريات بسياسة EXACT_COST يتطلب إجماليًا صريحًا لكل سطر');
+    }
 
     // Negative stock check
     if (isOutflow) {
@@ -717,9 +890,9 @@ export class InventoryService {
       INSERT INTO inventory.stock_transactions (
         company_id, branch_id, transaction_number, transaction_type,
         transaction_date, warehouse_id, reference_type, reference_id,
-        status, notes, created_by
+        valuation_policy, status, notes, created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'POSTED', $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'POSTED', $10, $11)
       RETURNING *
     `, [
       companyId,
@@ -730,6 +903,7 @@ export class InventoryService {
       dto.warehouseId,
       dto.referenceType || null,
       dto.referenceId || null,
+      isFixedCostReturn ? 'ORIGINAL_COST' : (isTransferCostLeg ? 'TRANSFER_COST' : (isExactCostReceipt ? 'EXACT_COST' : 'WAC')),
       dto.notes || null,
       dto.userId || null,
     ]);
@@ -739,15 +913,45 @@ export class InventoryService {
     // Insert lines with valuation
     for (let idx = 0; idx < dto.lines.length; idx++) {
       const line = dto.lines[idx];
-      let unitCost = line.unitCost || 0;
+      // PHASE 9.4: an explicitly provided unit cost — INCLUDING zero (fully
+      // discounted goods have a genuine zero net cost) — is authoritative for
+      // inflows and fixed-cost returns. Only a MISSING cost falls back to WAC,
+      // and every ordinary outflow still uses WAC unconditionally.
+      const costProvided = line.unitCost !== undefined && line.unitCost !== null;
+      let unitCost = costProvided ? (line.unitCost as number) : 0;
 
-      // If outflow or no unitCost given, use current weighted average cost!
-      if (unitCost === 0 || isOutflow) {
+      if (isFixedCostReturn) {
+        // Linked purchase return: caller-supplied original net unit cost is
+        // authoritative (a zero net from a fully discounted line is valid).
+        unitCost = costProvided ? (line.unitCost as number) : 0;
+      } else if (isTransferCostLeg) {
+        // Transfer leg: the precomputed shared value is authoritative and
+        // was validated present above; never substitute WAC here.
+        unitCost = line.unitCost as number;
+      } else if (isOutflow) {
+        // Ordinary outflow: current weighted average cost, always.
+        const stockData = await this.getItemStock(line.itemId, dto.warehouseId);
+        unitCost = stockData.averageCost;
+      } else if (!costProvided) {
+        // Inflow without a stated cost: fall back to current average.
         const stockData = await this.getItemStock(line.itemId, dto.warehouseId);
         unitCost = stockData.averageCost;
       }
 
-      const totalCost = line.quantity * unitCost;
+      // PHASE 9.4.2: persist through the central storage-precision rule so the
+      // stored line always satisfies total == round4(quantity * storedUnit)
+      // with the SAME rounded unit the ledger replay consumes. A raw float
+      // product must never reach the database (it can round across an integer
+      // boundary, e.g. 29999.999999999996 -> 30000.0000). Residual differences
+      // against exact-decimal journal amounts for fractional nets are bounded
+      // (<= qty * 5e-5) and documented — never auto-posted anywhere.
+      // PHASE 9.4.4: EXACT_COST receipt lines bypass derivation — the caller
+      // total (exact invoice line net, == journal) is authoritative and the
+      // unit stays informational. Replay consumes the stored total.
+      const storedUnitCost = round4(unitCost);
+      const totalCost = isExactCostReceipt
+        ? round2(line.totalCost as number)
+        : round4(line.quantity * storedUnitCost);
 
       await db.query(`
         INSERT INTO inventory.stock_transaction_lines (
@@ -758,7 +962,7 @@ export class InventoryService {
         tx.id,
         line.itemId,
         line.quantity,
-        unitCost,
+        storedUnitCost,
         totalCost,
         line.locationId || null,
         idx + 1,
@@ -812,41 +1016,42 @@ export class InventoryService {
     const seq = parseInt(countRes.rows[0].count, 10) + 1;
     const transferNumber = `TRF-2026-${seq.toString().padStart(4, '0')}`;
 
-    // 2. Perform Outflow from Source Warehouse
+    // 2. Precompute ONE shared transfer value per line (PHASE 9.4.1): the
+    // source-warehouse average rounded to NUMERIC(18,4) storage precision.
+    // Both legs persist this same value so valuation replay cancels exactly.
+    const transferLines: StockTransactionLineDto[] = [];
+    for (const l of dto.lines) {
+      const srcStock = await this.getItemStock(l.itemId, dto.fromWarehouseId);
+      transferLines.push({ itemId: l.itemId, quantity: l.quantity, unitCost: round4(srcStock.averageCost) });
+    }
+
+    // 3. Perform Outflow from Source Warehouse (same shared value)
     const outTx = await this.createStockTransaction({
       transactionType: 'TRANSFER_OUT',
       transactionDate: dto.transferDate,
       warehouseId: dto.fromWarehouseId,
       referenceType: 'STOCK_TRANSFER',
       notes: `تحويل صادر برقم ${transferNumber} إلى المستودع الهدف`,
-      lines: dto.lines.map(l => ({ itemId: l.itemId, quantity: l.quantity })),
+      lines: transferLines.map((l) => ({ itemId: l.itemId, quantity: l.quantity, unitCost: l.unitCost })),
+      valuationPolicy: 'TRANSFER_COST',
       companyId,
       userId: dto.userId,
     });
 
-    // 3. Perform Inflow to Target Warehouse using same cost
-    const inLinesWithCost: StockTransactionLineDto[] = [];
-    for (const l of dto.lines) {
-      const stock = await this.getItemStock(l.itemId, dto.fromWarehouseId);
-      inLinesWithCost.push({
-        itemId: l.itemId,
-        quantity: l.quantity,
-        unitCost: stock.averageCost,
-      });
-    }
-
+    // 4. Perform Inflow to Target Warehouse using same persisted value
     const inTx = await this.createStockTransaction({
       transactionType: 'TRANSFER_IN',
       transactionDate: dto.transferDate,
       warehouseId: dto.toWarehouseId,
       referenceType: 'STOCK_TRANSFER',
       notes: `تحويل وارد برقم ${transferNumber} من مستودع المصدر`,
-      lines: inLinesWithCost,
+      lines: transferLines.map((l) => ({ itemId: l.itemId, quantity: l.quantity, unitCost: l.unitCost })),
+      valuationPolicy: 'TRANSFER_COST',
       companyId,
       userId: dto.userId,
     });
 
-    // 4. Save transfer record
+    // 5. Save transfer record
     const trfRes = await db.query<any>(`
       INSERT INTO inventory.stock_transfers (
         company_id, transfer_number, from_warehouse_id, to_warehouse_id,
@@ -1085,6 +1290,28 @@ export class InventoryService {
     const items = await this.getItems();
     const subledgerValue = items.reduce((sum, item) => sum + (item.stockValue || 0), 0);
 
+    // 1b. PHASE 9.5.1 — per-warehouse subsidiary balances, each replayed in
+    // its own (item, warehouse) scope. The journal has no warehouse dimension,
+    // so warehouses carry subledger values only; the GL leg stays global
+    // (per-warehouse GL splits shown only where data allows: never today).
+    const warehouses: Array<{ warehouseId: string; warehouseName: string; quantity: number; value: number }> = [];
+    try {
+      const whRes = await db.query<any>('SELECT id, name FROM inventory.warehouses ORDER BY created_at ASC');
+      const itemIds = await db.query<{ id: string }>('SELECT id FROM inventory.items');
+      for (const w of whRes.rows) {
+        let wQty = 0;
+        let wVal = 0;
+        for (const it of itemIds.rows) {
+          const m = await this.getItemStock(it.id, w.id);
+          wQty += m.currentStock;
+          wVal += m.stockValue;
+        }
+        warehouses.push({ warehouseId: w.id, warehouseName: w.name, quantity: wQty, value: wVal });
+      }
+    } catch {
+      // Warehouses table unavailable (partial migration state) — global only.
+    }
+
     // 2. General Ledger Control Account (1104) Balance
     // In double entry, Account 1104 normal balance is DEBIT: Debits - Credits
     const glRes = await db.query<any>(`
@@ -1095,7 +1322,7 @@ export class InventoryService {
       FROM accounting.journal_entry_lines jl
       JOIN accounting.journal_entries je ON je.id = jl.journal_entry_id
       JOIN accounting.accounts a ON a.id = jl.account_id
-      WHERE a.code = '1104' AND je.status = 'POSTED'
+      WHERE a.code = '1104' AND je.status IN ('POSTED', 'REVERSED')
     `);
     const glBalance = parseFloat(glRes.rows[0]?.gl_balance || '0');
 
@@ -1110,6 +1337,8 @@ export class InventoryService {
       glAccountCode: '1104',
       glAccountName: 'المخزون السلعي (حساب الرقابة)',
       itemCount: items.length,
+      warehouses,
+      warehousesValue: warehouses.reduce((sum, w) => sum + w.value, 0),
       reconciledAt: new Date().toISOString(),
     };
   }

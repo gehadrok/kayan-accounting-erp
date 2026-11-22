@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLookup, LookupType } from '../../context/LookupContext';
+import { useSettings } from '../../context/SettingsContext';
 import { Search, X, Check, Clock, ChevronRight, ChevronLeft, AlertCircle, RefreshCw } from 'lucide-react';
 
 const LOOKUP_CONFIG: Record<LookupType, { title: string; endpoint: string; columns: { key: string; label: string }[] }> = {
@@ -125,6 +126,10 @@ const LOOKUP_CONFIG: Record<LookupType, { title: string; endpoint: string; colum
 
 export const LookupDialog: React.FC = () => {
   const { isOpen, lookupType, onSelect, closeLookup } = useLookup();
+  // PHASE 10.5.1 — debounce was hardcoded to 200ms while the settings screen
+  // offered a control that saved nothing; it now reads ui.lookup_debounce_ms.
+  const { getValue } = useSettings();
+  const debounceMs = Number(getValue('ui.lookup_debounce_ms', 200)) || 200;
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -181,9 +186,9 @@ export const LookupDialog: React.FC = () => {
     if (!isOpen) return;
     const timer = setTimeout(() => {
       fetchResults(query);
-    }, 200);
+    }, debounceMs);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, debounceMs]);
 
   // Global keyboard navigation while dialog is open (ArrowDown, ArrowUp, Enter, Escape)
   useEffect(() => {

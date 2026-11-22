@@ -39,7 +39,12 @@ import { CompanyBranchesPage } from './pages/CompanyBranches';
 import { ReportsCenter } from './pages/ReportsCenter';
 import { ReportViewer } from './pages/ReportViewer';
 import { SettingsHub } from './pages/SettingsHub';
+import { CompanySettingsPage } from './pages/CompanySettings';
+import { CompanyProfileProvider } from './context/CompanyProfileContext';
+import { ToastProvider } from './components/ui';
+import { SettingsProvider } from './context/SettingsContext';
 import { NavigationProvider, useNavigation } from './context/NavigationContext';
+import { AuthenticationGate } from './components/auth/AuthenticationGate';
 
 const MainView: React.FC = () => {
   const { currentRoute } = useNavigation();
@@ -51,6 +56,11 @@ const MainView: React.FC = () => {
     }
     if (currentRoute.startsWith('/reports/view/')) {
       return <ReportViewer />;
+    }
+    // PHASE 10.0: company identity screen. Checked BEFORE the generic
+    // '/settings' catch-all, which would otherwise swallow this route.
+    if (currentRoute === '/settings/company' || currentRoute === 'settings/company') {
+      return <CompanySettingsPage />;
     }
     if (currentRoute.startsWith('/settings')) {
       return <SettingsHub />;
@@ -144,6 +154,10 @@ const MainView: React.FC = () => {
       case 'chart-of-accounts':
         return <ChartOfAccountsPage />;
       case '/accounting/journal-entries':
+      // PHASE 10.5.2 — normalizePath keeps the leading slash, so the legacy
+      // no-slash case below could never match and /journal-entries fell
+      // through to the Dashboard.
+      case '/journal-entries':
       case 'journal-entries':
         return <JournalEntriesPage />;
       case '/accounting/general-ledger':
@@ -200,7 +214,21 @@ const MainView: React.FC = () => {
 export default function App() {
   return (
     <NavigationProvider>
-      <MainView />
+      <AuthenticationGate>
+        {/* PHASE 10.5.1 — one central load of core.settings: theme, direction,
+            language, density and report formats applied app-wide from here. */}
+        <SettingsProvider>
+          {/* PHASE 10.0 — one central fetch of the company identity, shared by the
+              settings screen, the shell and every printable report. */}
+          <CompanyProfileProvider>
+            {/* KAYAN ENTERPRISE UI — طبقة الرسائل الموحدة. لا تغيّر أي
+                منطق: تعرض فقط ما تطلبه الشاشات بعد تأكيد الخادم. */}
+            <ToastProvider>
+              <MainView />
+            </ToastProvider>
+          </CompanyProfileProvider>
+        </SettingsProvider>
+      </AuthenticationGate>
     </NavigationProvider>
   );
 }

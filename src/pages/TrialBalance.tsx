@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useCompanyProfile } from '../context/CompanyProfileContext';
+import { ReportHeader } from '../components/company/ReportHeader';
 import { 
   Scale, 
   Search, 
@@ -10,6 +12,8 @@ import {
 } from 'lucide-react';
 
 export const TrialBalancePage: React.FC = () => {
+  // PHASE 10.0 — company identity from the single central source
+  const { company } = useCompanyProfile();
   const [tb, setTb] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -43,8 +47,12 @@ export const TrialBalancePage: React.FC = () => {
   });
 
   return (
-    <div className="space-y-5 animate-in fade-in duration-200" dir="rtl">
-      {/* Top Header */}
+<div className="space-y-5 animate-in fade-in duration-200" dir="rtl">
+        {/* PHASE 10.0 — print-only shared identity header (screen layout untouched) */}
+        <div className="hidden print:block">
+          <ReportHeader company={company} title="ميزان المراجعة (Trial Balance)" compact />
+        </div>
+        {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs print:hidden">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-linear-to-tr from-cyan-600 to-blue-700 text-white flex items-center justify-center shadow-md shadow-cyan-500/20">

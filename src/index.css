@@ -1,12 +1,170 @@
 @import "tailwindcss";
+/* KAYAN ENTERPRISE UI — حركات الدخول الموحدة (animate-in / fade-in).
+   بدون هذا الاستيراد تصبح فئات الحركة في Dialog وToast صامتة ولا
+   يحدث خطأ، فيختفي فرق سلوكي صغير يصعب اكتشافه بالعين. */
+@import "tw-animate-css";
 @import "@fontsource/cairo";
+/* KAYAN ENTERPRISE UI —Design Tokens (single source of truth).
+   يستورد هذا الملف رموز الهوية البصرية، ثم تُشتق منها كل
+   القيم الدلالية في :root بالأسفل. ترتيب الاستيراد مهم: CSS
+   يتطابق بالترتيب، فالملفان لا يحددان نفس المتغيرات أصلاً. */
+@import "./design/tokens.css";
+/* PHASE 10.0 — shared bilingual report header (print + screen) */
+@import "./company-print.css";
 
 @layer base {
   body {
-    @apply font-sans antialiased bg-slate-50 text-slate-900;
+    /* الخلفية والخط يأتيان من رموز Kayan مباشرة بدل أصوات
+       Tailwind العامة، حتى تنعكس أي تعديلات هوية على الصفحة
+       كلها بلا لمس صفحة بصفحة. */
+    @apply font-sans antialiased;
+    background-color: var(--kayan-page);
+    color: var(--kayan-text);
     direction: rtl;
     text-align: right;
   }
+
+  /* الأرقام في الجداول المالية تُقرأ عمودياً، فالأرقام
+     الجدولية (tabular) ضرورية لا تجميلية. */
+  .kayan-numeric {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
+
+/* ============================================================
+   PRINT — only the report may reach the sheet
+   ============================================================
+   Every printable screen in this app calls `window.print()` on the LIVE SPA
+   page (see every `onClick={() => window.print()}`). Without an explicit
+   print stylesheet the browser lays the WHOLE application out on paper: the
+   fixed sidebar, the top bar with its search box and window buttons, and
+   every other block that happens to sit in the flow. That is what produced
+   "the print comes out like the screen".
+
+   The shell is therefore marked `data-app-chrome` and hidden for print, while
+   each report page is wrapped in `data-print-root` and kept. Screens that are
+   not reports (invoices, journals, masters) already carry `print:hidden` on
+   their toolbars; this rule is what removes the surrounding application.
+
+   `no-print` / `kayan-no-print` remain available for anything else that must
+   not be printed (see company-print.css).
+   ============================================================ */
+@media print {
+  [data-app-chrome] {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  /* The shell reserves a right margin for the sidebar; with the sidebar gone
+     that margin would otherwise indent the whole sheet. */
+  .mr-64 {
+    margin-right: 0 !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  /* Report tables must not be cut mid-column and their header band must keep
+     its dark background (printers drop backgrounds by default). */
+  table {
+    page-break-inside: auto;
+  }
+
+  thead {
+    display: table-header-group; /* repeat the header on every page */
+  }
+
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  th {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* سند القبض / سند الصرف: لا يُprinted شيء من شاشة التطبيق
+     ما عدا محتوى الطباعة المخصص (تفاصيل السند والطرف المقابل فقط). */
+  [data-document-print] {
+    display: block !important;
+    position: static !important;
+    width: auto !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    float: none !important;
+    overflow: visible !important;
+  }
+
+  [data-document-print] * {
+    visibility: visible !important;
+  }
+
+  /* كل مساحة العمل (الأزرار، شريط الإجراءات، التفاصيل، التدقيق) تُخفى عند الطباعة. */
+  .kayan-sheet-workspace,
+  .kayan-voucher-workspace,
+  .kayan-voucher-actions,
+  .kayan-sheet-actionbar,
+  .kayan-voucher-action-row {
+    display: none !important;
+  }
+
+  /* قائمة التنقل والزرّات العلوية لا تصل للورقة. */
+  .kayan-voucher-mobile-menu,
+  .kayan-voucher-window-controls,
+  .kayan-sheet-nav-arrows,
+  .kayan-sheet-search-field {
+    display: none !important;
+  }
+
+  /* عناصر مساحة الطباعة تُظهر بوضوح عند الطباعة (ضد أي قاعدة إخفاء عامة). */
+  [data-document-print] .kayan-sheet-panel,
+  [data-document-print] .kayan-sheet-panel-body,
+  [data-document-print] .kayan-sheet-info-grid,
+  [data-document-print] .kayan-sheet-field,
+  [data-document-print] .kayan-sheet-inline-field,
+  [data-document-print] .kayan-sheet-static,
+  [data-document-print] .kayan-sheet-ledger-wrap,
+  [data-document-print] .kayan-sheet-ledger,
+  [data-document-print] table,
+  [data-document-print] tr,
+  [data-document-print] td,
+  [data-document-print] th {
+    visibility: visible !important;
+  }
+
+  [data-document-print] table {
+    display: table !important;
+  }
+
+  [data-document-print] tr {
+    display: table-row !important;
+  }
+
+  [data-document-print] td,
+  [data-document-print] th {
+    display: table-cell !important;
+  }
+}
+
+/* ============================================================
+   PHASE 10.5.1 — table density (ui.density setting)
+   SettingsContext toggles `compact` on <html>. This rule sits OUTSIDE
+   Tailwind's layers on purpose: unlayered CSS wins over the layered
+   `py-*`/`px-*` utilities regardless of specificity, so the saved
+   density actually reaches every table without touching page code.
+   ============================================================ */
+html.compact table td,
+html.compact table th {
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
 }
 
 @theme {
@@ -19,9 +177,71 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ============================================================
+   KAYAN ENTERPRISE UI — Tailwind utilities
+   ------------------------------------------------------------
+   هذه الطبقة تترجم رموز design/tokens.css إلى أسماء أدوات
+   Tailwind (bg-surface, text-muted, border-line, rounded-card
+   …). فائدة ذلك: المكوّنات تكتب أسماء دلالية مقروءة بدل
+   سلاسل hex متفرقة، فيبقى تعديل الهوية نقطياً من ملف واحد.
+
+   ملاحظة: كل هذه الأدوات تعتمد على متغيرات CSS وقت التشغيل،
+   لذلك تتبع تبديل الوضع الداكن تلقائياً بلا إعادة بناء.
+   ============================================================ */
+@theme inline {
+    --color-page: var(--kayan-page);
+    --color-surface: var(--kayan-surface);
+    --color-surface-muted: var(--kayan-surface-muted);
+    --color-surface-hover: var(--kayan-surface-hover);
+    --color-surface-sunken: var(--kayan-surface-sunken);
+    --color-line: var(--kayan-line);
+    --color-line-soft: var(--kayan-line-soft);
+    --color-line-strong: var(--kayan-line-strong);
+    --color-brand: var(--kayan-primary);
+    --color-brand-hover: var(--kayan-primary-hover);
+    --color-brand-soft: var(--kayan-primary-soft);
+    --color-navy: var(--kayan-sidebar);
+    --color-ink: var(--kayan-text);
+    --color-ink-muted: var(--kayan-text-muted);
+    --color-state-success: var(--kayan-success);
+    --color-state-success-soft: var(--kayan-success-soft);
+    --color-state-warning: var(--kayan-warning);
+    --color-state-warning-soft: var(--kayan-warning-soft);
+    --color-state-danger: var(--kayan-danger);
+    --color-state-danger-soft: var(--kayan-danger-soft);
+    /* نصوص الحالات: درجات مخصّصة للتباين (لا تُستخدم كخلفيات).
+       الشاشات القديمة كانت تكتب text-emerald-600/text-rose-600
+       وتباينها على الأبيض 3.6 فقط؛ هذه هي البديل الدلالي. */
+    --color-ink-success: var(--kayan-success-ink);
+    --color-ink-warning: var(--kayan-warning-ink);
+    --color-ink-danger: var(--kayan-danger-ink);
+    --color-ink-info: var(--kayan-info-ink);
+    --color-ink-purple: var(--kayan-purple-ink);
+    --color-ink-teal: var(--kayan-teal-ink);
+
+    --radius-control: var(--kayan-radius-control);
+    --radius-card: var(--kayan-radius-card);
+    --radius-dialog: var(--kayan-radius-dialog);
+    /* مفقود سابقاً: StatusBadge وعدّادات Tabs تكتب rounded-pill،
+       فكانت الفئة لا تُولَّد وتعود الزوايا قائمة. */
+    --radius-pill: var(--kayan-radius-pill);
+
+    --shadow-k-xs: var(--kayan-shadow-xs);
+    --shadow-k-sm: var(--kayan-shadow-sm);
+    --shadow-k-md: var(--kayan-shadow-md);
+    --shadow-k-lg: var(--kayan-shadow-lg);
+
+    --spacing-topbar: var(--kayan-topbar-h);
+    --spacing-sidebar: var(--kayan-sidebar-w);
+    --spacing-sidebar-collapsed: var(--kayan-sidebar-w-collapsed);
+}
+
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    /* الخط المعتمد في هوية KAYAN. كان هذا السطر يعيد تعريف
+       font-sans إلى Geist بعد تعريف Cairo أعلاه، فيفقد النص العربي
+       خط الهوية في معظم الشاشات. Cairo هو المصدر. */
+    --font-sans: "Cairo", "Segoe UI", "Noto Sans Arabic", "Tahoma", sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -62,73 +282,82 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ============================================================
+   KAYAN ENTERPRISE UI — SEMANTIC LAYER
+   ------------------------------------------------------------
+   هذه القيم هي "جسر" بين رموز الهوية (--kayan-*) وأسماء
+   shadcn/Tailwind القائمة (@theme inline أعلاه). motivo ذلك أن
+  القائمة shadcn تستخدم --primary/--border/--background افتراضياً،
+   فلن نغيّر سلوكها، لكننا نجعلها تستخدم هوية Kayan بدل
+   درجات oklch رمادية عامة.
+   ============================================================ */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    --background: var(--kayan-page);
+    --foreground: var(--kayan-text);
+    --card: var(--kayan-surface);
+    --card-foreground: var(--kayan-text);
+    --popover: var(--kayan-surface);
+    --popover-foreground: var(--kayan-text);
+    --primary: var(--kayan-primary);
+    --primary-foreground: #FFFFFF;
+    --secondary: var(--kayan-surface-muted);
+    --secondary-foreground: var(--kayan-text);
+    --muted: var(--kayan-surface-muted);
+    --muted-foreground: var(--kayan-text-muted);
+    --accent: var(--kayan-primary-soft);
+    --accent-foreground: var(--kayan-primary-hover);
+    --destructive: var(--kayan-danger);
+    --border: var(--kayan-line);
+    --input: var(--kayan-line);
+    --ring: var(--kayan-primary);
+    --chart-1: var(--kayan-primary);
+    --chart-2: var(--kayan-success);
+    --chart-3: var(--kayan-warning);
+    --chart-4: var(--kayan-danger);
+    --chart-5: var(--kayan-text-muted);
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar: var(--kayan-sidebar);
+    --sidebar-foreground: #CBD5E1;
+    --sidebar-primary: var(--kayan-primary);
+    --sidebar-primary-foreground: #FFFFFF;
+    --sidebar-accent: rgb(255 255 255 / 6%);
+    --sidebar-accent-foreground: #FFFFFF;
+    --sidebar-border: rgb(255 255 255 / 8%);
+    --sidebar-ring: var(--kayan-primary);
 }
 
+/* ============================================================
+   الوضع الداكن — قيم الرموز نفسها موجودة في design/tokens.css
+   تحت .dark. لا نكررها هنا، لذلك لا يمكن أن ينحرف أحدنا عن
+   الآخر. القيم الدلالية أدناه مجرد أسماء shadcn تشير إليها.
+   ============================================================ */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --background: var(--kayan-page);
+    --foreground: var(--kayan-text);
+    --card: var(--kayan-surface);
+    --card-foreground: var(--kayan-text);
+    --popover: var(--kayan-surface);
+    --popover-foreground: var(--kayan-text);
+    --primary: var(--kayan-primary);
+    --primary-foreground: #FFFFFF;
+    --secondary: var(--kayan-surface-muted);
+    --secondary-foreground: var(--kayan-text);
+    --muted: var(--kayan-surface-muted);
+    --muted-foreground: var(--kayan-text-muted);
+    --accent: var(--kayan-primary-soft);
+    --accent-foreground: var(--kayan-primary-hover);
+    --destructive: var(--kayan-danger);
+    --border: var(--kayan-line);
+    --input: var(--kayan-line);
+    --ring: var(--kayan-primary);
+    --sidebar: var(--kayan-sidebar);
+    --sidebar-foreground: #CBD5E1;
+    --sidebar-primary: var(--kayan-primary);
+    --sidebar-primary-foreground: #FFFFFF;
+    --sidebar-accent: rgb(255 255 255 / 8%);
+    --sidebar-accent-foreground: #FFFFFF;
+    --sidebar-border: rgb(255 255 255 / 10%);
+    --sidebar-ring: var(--kayan-primary);
 }
 
 @layer base {
@@ -141,4 +370,1426 @@
   html {
     @apply font-sans;
     }
+}
+
+/* ============================================================
+   PHASE UI-CRUD — LEGACY UTILITY BRIDGE (طبقة توافق مؤقتة)
+   ============================================================
+   السبب الجذري لمشكلة "النص الأبيض/الباهت": شاشات قديمة كثيرة
+   كتبت ألوان Tailwind خاماً (`bg-white`, `text-slate-900`,
+   `text-slate-400`) بدل رموز Kayan الدلالية. النتيجة:
+     • الوضع الفاتح: text-slate-400 على أبيض = تباين 2.63 فقط.
+     • الوضع الداكن: bg-white يبقى أبيض بينما text-ink/dark:text-*
+       ينقلب فاتحاً = أبيض على أبيض (تباين 1.16 مقيس فعلياً).
+   الحل المركزي هنا يعيد ربط هذه الأسماء الخام بالرموز الدلالية
+   نفسها التي تستخدمها المكوّنات الحديثة، بدل تعديل 40 شاشة
+   بألوان متفرقة. القواعد غير موضوعة داخل @layer (unlayered)
+   لتغلب أدوات Tailwind المولّدة، لكن متغيّرات dark: الخاصة
+   بالشاشات تبقى أقوى بالأولوية فلا نكسر تخصيصاً مقصوداً.
+
+   هذه طبقة انتقالية: أي شاشة تُعاد كتابتها بالرموز الدلالية
+   (bg-surface / text-ink / border-line) لم تعد تحتاجها.
+   ============================================================ */
+
+/* 1) الأسطح الفاتحة الثابتة */
+.bg-white { background-color: var(--kayan-surface); }
+.bg-white\/90 { background-color: color-mix(in srgb, var(--kayan-surface) 90%, transparent); }
+.bg-white\/80 { background-color: color-mix(in srgb, var(--kayan-surface) 80%, transparent); }
+.bg-slate-50,
+.bg-slate-50\/80,
+.bg-slate-50\/70,
+.bg-slate-100 { background-color: var(--kayan-surface-muted); }
+.bg-slate-200 { background-color: var(--kayan-surface-sunken); }
+.hover\:bg-slate-50:hover,
+.hover\:bg-slate-100:hover,
+.hover\:bg-slate-100\/70:hover,
+.hover\:bg-slate-200:hover { background-color: var(--kayan-surface-hover); }
+.hover\:bg-slate-50\/70:hover,
+.hover\:bg-slate-50\/50:hover,
+.hover\:bg-slate-50\/80:hover { background-color: var(--kayan-surface-hover); }
+
+/* 2) النصوص المحايدة — كلها تقرأ من رموز الوضع النشط */
+.text-slate-950,
+.text-slate-900,
+.text-slate-800,
+.text-gray-950,
+.text-gray-900 { color: var(--kayan-text); }
+.text-slate-700,
+.text-slate-600,
+.text-gray-800,
+.text-gray-700,
+.text-gray-600 { color: var(--kayan-text); }
+.text-slate-500,
+.text-slate-400,
+.text-gray-500,
+.text-gray-400 { color: var(--kayan-text-muted); }
+
+/* 3) الحدود والفواصل */
+.border-slate-100,
+.border-slate-200,
+.border-slate-200\/80,
+.border-slate-200\/70,
+.border-slate-300,
+.border-gray-200 { border-color: var(--kayan-line); }
+.divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.divide-slate-200 > :not([hidden]) ~ :not([hidden]),
+.divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: var(--kayan-line); }
+
+/* 4) ألوان نص الحالات — درجات مخصّصة للتباين في الوضعين */
+.text-emerald-600,
+.text-emerald-700,
+.text-emerald-800,
+.text-green-600,
+.text-green-700 { color: var(--kayan-success-ink); }
+.text-rose-600,
+.text-rose-700,
+.text-red-600,
+.text-red-700 { color: var(--kayan-danger-ink); }
+.text-amber-600,
+.text-amber-700,
+.text-orange-600,
+.text-orange-700 { color: var(--kayan-warning-ink); }
+.text-blue-600,
+.text-blue-700,
+.text-indigo-600,
+.text-indigo-700 { color: var(--kayan-info-ink); }
+.text-purple-600,
+.text-purple-700,
+.text-violet-600 { color: var(--kayan-purple-ink); }
+.text-teal-600,
+.text-teal-700,
+.text-cyan-600 { color: var(--kayan-teal-ink); }
+
+/* 5) خلفيات الحالات الباستيل: في الداكن تصبح تدرّجات داكنة تحمل
+      نفس الصبغة بدل أن تبقى بقعاً بيضاء ساطعة داخل واجهة داكنة. */
+.dark .bg-blue-50,
+.dark .bg-sky-50 { background-color: color-mix(in srgb, #3B82F6 16%, var(--kayan-surface)); }
+.dark .bg-indigo-50,
+.dark .bg-violet-50 { background-color: color-mix(in srgb, #6366F1 16%, var(--kayan-surface)); }
+.dark .bg-emerald-50,
+.dark .bg-green-50 { background-color: color-mix(in srgb, #10B981 16%, var(--kayan-surface)); }
+.dark .bg-rose-50,
+.dark .bg-red-50 { background-color: color-mix(in srgb, #F43F5E 16%, var(--kayan-surface)); }
+.dark .bg-amber-50,
+.dark .bg-orange-50 { background-color: color-mix(in srgb, #F59E0B 16%, var(--kayan-surface)); }
+.dark .bg-teal-50,
+.dark .bg-cyan-50 { background-color: color-mix(in srgb, #14B8A6 16%, var(--kayan-surface)); }
+.dark .bg-purple-50 { background-color: color-mix(in srgb, #A855F7 16%, var(--kayan-surface)); }
+
+/* 6) العناصر النائبة: تباين مقروء دائماً بدل سلوك المتصفح الباهت */
+input::placeholder,
+textarea::placeholder { color: var(--kayan-text-muted); opacity: 0.85; }
+
+/* 7) حقول القراءة فقط: خلفية هادئة بلا إخفاء النص */
+input[readonly],
+textarea[readonly],
+select[readonly] { color: var(--kayan-text); }
+
+/* ============================================================
+   Voucher pixel-match skin
+   ------------------------------------------------------------
+   This skin is intentionally scoped to receipt/payment routes. It
+   keeps the shared components and their behavior while matching the
+   dense desktop accounting composition in the supplied reference.
+   ============================================================ */
+.kayan-voucher-app {
+  --voucher-navy: #173968;
+  --voucher-navy-2: #1e477b;
+  --voucher-page: #e8eef6;
+  --voucher-line: #b7c5d6;
+  --voucher-green: #c8f2ce;
+  --voucher-pink: #f6dce5;
+  --voucher-yellow: #f7b91e;
+  background: var(--voucher-page) !important;
+}
+
+.kayan-voucher-app main {
+  padding: 0.5rem 0.75rem 0.75rem !important;
+}
+
+.kayan-voucher-topbar {
+  position: relative;
+  height: 48px;
+  padding: 0 0.75rem !important;
+  border: 0 !important;
+  background: var(--voucher-navy) !important;
+  color: #fff;
+  box-shadow: none !important;
+}
+
+.kayan-voucher-topbar > div {
+  height: 48px !important;
+}
+
+.kayan-voucher-topbar-title {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.kayan-voucher-topbar > div > *:not(.kayan-voucher-topbar-title) {
+  color: #fff;
+}
+
+.kayan-voucher-topbar input,
+.kayan-voucher-topbar [class*="bg-surface"] {
+  background: rgb(255 255 255 / 0.12) !important;
+  border-color: rgb(255 255 255 / 0.22) !important;
+  color: #fff !important;
+}
+
+.kayan-voucher-app #app-sidebar {
+  width: 256px;
+  background: #102d52;
+  border-color: rgb(255 255 255 / 0.12);
+}
+
+.kayan-voucher-app #app-sidebar > div:first-child {
+  height: 76px;
+  background: #0d294b;
+}
+
+.kayan-voucher-app #app-sidebar::before {
+  content: 'المحاسبة العامة';
+  position: absolute;
+  top: 76px;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  height: 34px;
+  align-items: center;
+  padding: 0 1rem;
+  background: #8a631c;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.kayan-voucher-app #app-sidebar nav {
+  padding: 2.6rem 0.65rem 0.5rem;
+}
+
+.kayan-voucher-app #app-sidebar nav button {
+  border-radius: 0.45rem;
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+.kayan-voucher-app #app-sidebar nav button[class*="bg-brand/20"] {
+  background: var(--voucher-yellow) !important;
+  color: #132c4f !important;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
+}
+
+.kayan-voucher-app #app-sidebar nav button[class*="bg-brand/20"] svg {
+  color: #132c4f !important;
+}
+
+.kayan-voucher-workspace {
+  min-height: calc(100dvh - 56px) !important;
+  gap: 0.45rem !important;
+  padding-bottom: 0.25rem !important;
+}
+
+/* Phase one composition: keep the voucher information compact and give the
+   detail table the dominant, flexible region of the viewport. */
+.kayan-voucher-body {
+  min-height: 0;
+}
+
+.kayan-voucher-info > section {
+  max-height: 14.5rem;
+  overflow: auto;
+}
+
+.kayan-voucher-details {
+  min-height: 22rem;
+}
+
+.kayan-voucher-details > div {
+  min-height: 0;
+}
+
+.kayan-voucher-details > div > section {
+  min-height: 18rem;
+  flex: 1 1 auto;
+}
+
+.kayan-voucher-details > div > section > div:last-child {
+  min-height: 0;
+}
+
+.kayan-voucher-secondary {
+  flex: 0 0 auto;
+}
+
+.kayan-voucher-secondary-panel {
+  overflow: hidden;
+  border: 1px solid var(--voucher-line);
+  border-radius: 0.55rem;
+  background: #f8fafc;
+}
+
+.kayan-voucher-secondary-panel > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.55rem 0.8rem;
+  color: var(--voucher-navy);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.kayan-voucher-secondary-panel > summary::-webkit-details-marker { display: none; }
+.kayan-voucher-secondary-panel > summary::before {
+  content: '＋';
+  display: inline-block;
+  margin-inline-end: 0.4rem;
+  color: #075fc9;
+  font-size: 0.9rem;
+}
+.kayan-voucher-secondary-panel[open] > summary::before { content: '−'; }
+.kayan-voucher-secondary-panel > summary:hover { background: #eef3f9; }
+
+.kayan-voucher-secondary-content {
+  display: grid;
+  grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 1.28fr);
+  gap: 0.5rem;
+  border-top: 1px solid var(--voucher-line);
+  padding: 0.5rem;
+}
+
+.kayan-voucher-secondary-content > section {
+  min-width: 0;
+}
+
+.kayan-voucher-secondary-content > section > header {
+  min-height: 28px;
+}
+
+.kayan-voucher-secondary-content > section > div {
+  padding: 0.55rem 0.7rem !important;
+}
+
+.kayan-voucher-audit {
+  max-height: 9.25rem;
+  overflow: auto;
+}
+
+.kayan-voucher-page-header {
+  display: none;
+}
+
+.kayan-voucher-actions {
+  order: 0;
+  margin: 0;
+}
+
+.kayan-voucher-actions > div {
+  min-height: 64px;
+  padding: 0.5rem 0.8rem !important;
+  border: 1px solid var(--voucher-line) !important;
+  border-radius: 0.6rem !important;
+  background: #f8fafc !important;
+  box-shadow: 0 1px 3px rgb(23 57 104 / 0.15) !important;
+}
+
+.kayan-voucher-action-row {
+  align-items: stretch !important;
+}
+
+.kayan-voucher-actions button {
+  height: 46px !important;
+  min-width: 106px;
+  border-radius: 0.45rem !important;
+  font-size: 0.86rem !important;
+  font-weight: 800 !important;
+}
+
+.kayan-voucher-actions button.bg-brand { background: #075fc9 !important; }
+.kayan-voucher-actions button.bg-state-success { background: #008b59 !important; }
+.kayan-voucher-actions button.bg-surface { background: #282828 !important; color: #fff !important; border-color: #282828 !important; }
+.kayan-voucher-actions button.bg-transparent { background: #cbd8e8 !important; color: var(--voucher-navy) !important; }
+
+.kayan-voucher-actions > div > div:last-child {
+  margin-inline-start: auto;
+}
+
+.kayan-voucher-navigation-tools {
+  order: -1;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-inline-end: auto;
+}
+
+.kayan-voucher-search-field {
+  display: flex;
+  height: 42px;
+  width: 202px;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #b6c4d5;
+  border-radius: 0.45rem;
+  background: #fff;
+  padding: 0 0.65rem;
+  color: #174a90;
+}
+
+.kayan-voucher-search-field input {
+  min-height: 0 !important;
+  width: 100%;
+  border: 0 !important;
+  outline: 0;
+  background: transparent !important;
+  color: #172b48;
+  font-size: 0.78rem !important;
+}
+
+.kayan-voucher-navigation-tools > button {
+  display: inline-flex;
+  height: 42px;
+  width: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #b6c4d5;
+  border-radius: 0.4rem;
+  background: #fff;
+  color: var(--voucher-navy);
+}
+
+.kayan-voucher-navigation-tools > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.kayan-voucher-workspace > div.flex.min-h-0.min-w-0.flex-1.flex-col {
+  gap: 0.45rem !important;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section,
+.kayan-voucher-workspace section[aria-label="تفاصيل المستند"] section,
+.kayan-voucher-workspace section[aria-label="بيانات التدقيق"] > section {
+  border: 1px solid var(--voucher-line) !important;
+  border-radius: 0.65rem !important;
+  box-shadow: 0 1px 3px rgb(23 57 104 / 0.16) !important;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > header,
+.kayan-voucher-workspace section[aria-label="تفاصيل المستند"] section > header,
+.kayan-voucher-workspace section[aria-label="بيانات التدقيق"] > section > header {
+  min-height: 31px;
+  align-items: center;
+  padding: 0.25rem 0.8rem !important;
+  border: 0 !important;
+  background: var(--voucher-navy-2) !important;
+  color: #fff !important;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > header h2,
+.kayan-voucher-workspace section[aria-label="تفاصيل المستند"] section > header h2,
+.kayan-voucher-workspace section[aria-label="بيانات التدقيق"] > section > header h2 {
+  color: #fff !important;
+  font-size: 0.88rem !important;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > header p,
+.kayan-voucher-workspace section[aria-label="تفاصيل المستند"] section > header p,
+.kayan-voucher-workspace section[aria-label="بيانات التدقيق"] > section > header p {
+  display: none;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > div,
+.kayan-voucher-workspace section[aria-label="بيانات التدقيق"] > section > div {
+  padding: 0.55rem 0.7rem !important;
+}
+
+.kayan-voucher-workspace input,
+.kayan-voucher-workspace select,
+.kayan-voucher-workspace textarea {
+  min-height: 35px;
+  border-color: #afbed0 !important;
+  border-radius: 0.35rem !important;
+  background: #fff !important;
+  font-size: 0.82rem !important;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > div > .space-y-3\.5 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem 0.8rem;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > div > .space-y-3\.5 > * {
+  margin-top: 0 !important;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > div > .space-y-3\.5 > .grid,
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > div > .space-y-3\.5 > p {
+  grid-column: 1 / -1;
+}
+
+.kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > div > .space-y-3\.5 > .grid {
+  display: contents;
+}
+
+.kayan-voucher-workspace label,
+.kayan-voucher-workspace dt,
+.kayan-voucher-workspace .text-ink-muted {
+  color: #172b48;
+}
+
+.kayan-voucher-workspace section[aria-label="تفاصيل المستند"] {
+  min-height: 0;
+}
+
+.kayan-voucher-workspace section[aria-label="تفاصيل المستند"] > div {
+  gap: 0.45rem !important;
+}
+
+.kayan-voucher-workspace section[aria-label="تفاصيل المستند"] section {
+  min-height: 0;
+}
+
+.kayan-voucher-workspace section[aria-label="تفاصيل المستند"] section > div:last-child {
+  padding: 0.35rem !important;
+}
+
+.kayan-voucher-workspace table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.77rem !important;
+}
+
+.kayan-voucher-workspace table thead {
+  background: var(--voucher-navy) !important;
+  color: #fff !important;
+}
+
+.kayan-voucher-workspace table thead th {
+  padding: 0.45rem 0.55rem !important;
+  background: var(--voucher-navy) !important;
+  color: #fff !important;
+  border-color: #6682a3 !important;
+}
+
+.kayan-voucher-workspace table tbody tr:nth-child(even) { background: #eef3f9; }
+.kayan-voucher-workspace table tbody tr:nth-child(odd) { background: #f8fafc; }
+.kayan-voucher-workspace table td { padding: 0.35rem 0.55rem !important; border-color: var(--voucher-line) !important; }
+
+.kayan-voucher-journal-table thead th,
+.kayan-voucher-journal-table tbody td {
+  white-space: nowrap;
+  border: 1px solid var(--voucher-line);
+}
+
+.kayan-voucher-journal-table tbody td:nth-last-child(2) { background: var(--voucher-green); font-weight: 800; }
+.kayan-voucher-journal-table tbody td:last-child { background: var(--voucher-pink); font-weight: 800; }
+
+.kayan-voucher-totals-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 48px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--voucher-line);
+  border-radius: 0.45rem;
+  background: #f8fafc;
+}
+
+.kayan-voucher-total {
+  min-width: 150px;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--voucher-line);
+  border-radius: 0.45rem;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.kayan-voucher-total.debit { margin-inline-start: auto; background: var(--voucher-green); }
+.kayan-voucher-total.credit { background: var(--voucher-pink); }
+.kayan-voucher-total.difference { background: #dceaff; }
+
+.kayan-voucher-workspace section[aria-label="بيانات التدقيق"] > section > div {
+  padding: 0.5rem 0.7rem !important;
+}
+
+.kayan-voucher-app .kayan-sidebar-nav {
+  scrollbar-color: rgb(255 255 255 / 0.22) transparent;
+}
+
+.kayan-voucher-app .kayan-sidebar-nav > button:first-child {
+  margin-bottom: 0.6rem;
+  border: 1px solid rgb(255 255 255 / 0.12);
+}
+
+.kayan-voucher-app .kayan-sidebar nav > div {
+  border-top: 1px solid rgb(255 255 255 / 0.07);
+  padding-top: 0.35rem;
+}
+
+.kayan-voucher-app .kayan-sidebar nav > div > div > button {
+  min-height: 2.55rem;
+}
+
+.kayan-voucher-app .kayan-sidebar nav > div > div > div {
+  margin-inline-start: 0.65rem;
+  padding-inline-start: 0.5rem;
+}
+
+@media (max-width: 1023px) {
+  .kayan-voucher-topbar-title { font-size: 0.9rem; }
+  .kayan-voucher-app main { padding: 0.4rem !important; }
+  .kayan-voucher-actions > div { min-height: auto; }
+  .kayan-voucher-actions button { min-width: 0; flex: 1 1 auto; }
+  .kayan-voucher-navigation-tools { order: 5; width: 100%; }
+  .kayan-voucher-search-field { flex: 1; width: auto; }
+  .kayan-voucher-workspace section[aria-label="بيانات المستند"] > section > div > .space-y-3\.5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kayan-voucher-totals-strip { flex-wrap: wrap; }
+  .kayan-voucher-total { flex: 1 1 140px; min-width: 0; }
+  .kayan-voucher-info > section { max-height: none; }
+  .kayan-voucher-details { min-height: 24rem; }
+  .kayan-voucher-secondary-content { grid-template-columns: 1fr; }
+}
+
+
+/* ============================================================
+   VoucherSheet — second skin layer for the receipt/payment
+   voucher screens (scoped to the voucher app shell).
+   ============================================================ */
+.kayan-voucher-app .kayan-sheet-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: calc(100dvh - 132px);
+}
+
+.kayan-voucher-app .kayan-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kayan-voucher-app .kayan-sheet-info-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  column-gap: 12px;
+  row-gap: 12px;
+  align-items: end;
+}
+
+.kayan-voucher-app .kayan-sheet-info-grid > .gcol-1 {
+  grid-column: 1;
+}
+
+.kayan-voucher-app .kayan-sheet-info-grid > .gcol-2 {
+  grid-column: 2;
+}
+
+.kayan-voucher-app .kayan-sheet-info-grid > .gcol-3 {
+  grid-column: 3;
+}
+
+.kayan-voucher-app .kayan-sheet-info-grid > .gcol-4 {
+  grid-column: 4;
+}
+
+.kayan-voucher-app .kayan-sheet-info-grid > .gcol-5 {
+  grid-column: 5;
+}
+
+.kayan-voucher-app .kayan-sheet-info-span2 {
+  grid-column: span 2;
+}
+
+.kayan-voucher-app .kayan-sheet-info-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.kayan-voucher-app .kayan-sheet-inline-pair {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kayan-voucher-app .kayan-sheet-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.kayan-voucher-app .kayan-sheet-field-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1c3a63;
+}
+
+.kayan-voucher-app .kayan-sheet-required {
+  color: #d0342c;
+  font-weight: 800;
+}
+
+.kayan-voucher-app .kayan-sheet-control {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.kayan-voucher-app .kayan-sheet-control > * {
+  width: 100%;
+}
+
+.kayan-voucher-app .kayan-sheet-control input,
+.kayan-voucher-app .kayan-sheet-control select,
+.kayan-voucher-app .kayan-sheet-control textarea {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #a9bed2;
+  border-radius: 6px;
+  background: #fff;
+  color: #172b48;
+  font-size: 12.5px;
+  padding: 0 10px;
+  outline: none;
+}
+
+.kayan-voucher-app .kayan-sheet-control input:focus,
+.kayan-voucher-app .kayan-sheet-control select:focus,
+.kayan-voucher-app .kayan-sheet-control textarea:focus {
+  border-color: #075fc9;
+  box-shadow: 0 0 0 3px rgb(7 95 201 / 0.18);
+}
+
+.kayan-voucher-app .kayan-sheet-static {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #a9bed2;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.kayan-voucher-app .kayan-sheet-static-icon {
+  display: flex;
+  color: #5b7ba3;
+  flex: 0 0 auto;
+}
+
+.kayan-voucher-app .kayan-sheet-static-value {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #172b48;
+  word-break: break-word;
+}
+
+.kayan-voucher-app .kayan-sheet-static.is-amount {
+  background: #e6f7ec;
+  border-color: #8fdcae;
+}
+
+.kayan-voucher-app .kayan-sheet-static.is-amount .kayan-sheet-static-value {
+  color: #006b43;
+  font-weight: 800;
+}
+
+.kayan-voucher-app .kayan-sheet-static.is-success .kayan-sheet-static-value {
+  color: #006b43;
+}
+
+.kayan-voucher-app .kayan-sheet-static.is-warning .kayan-sheet-static-value {
+  color: #8a5a00;
+}
+
+.kayan-voucher-app .kayan-sheet-inline-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #a9bed2;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.kayan-voucher-app .kayan-sheet-inline-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1c3a63;
+  white-space: nowrap;
+}
+
+.kayan-voucher-app .kayan-sheet-inline-control {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.kayan-voucher-app .kayan-sheet-amount-input {
+  background: #e6f7ec !important;
+  border-color: #8fdcae !important;
+  font-weight: 800;
+  color: #006b43 !important;
+}
+
+.kayan-voucher-app .kayan-sheet-note-cell {
+  display: flex;
+  align-items: stretch;
+}
+
+.kayan-voucher-app .kayan-sheet-note-btn {
+  width: 100%;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #a9bed2;
+  border-radius: 6px;
+  background: #fff;
+  color: #174a90;
+}
+
+.kayan-voucher-app .kayan-sheet-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid #f3c2c2;
+  background: #fdeeee;
+  color: #a12622;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Ribbon + panel */
+.kayan-voucher-app .kayan-sheet-panel {
+  position: relative;
+  border: 1px solid var(--voucher-line);
+  border-radius: 8px;
+  background: #f8fafc;
+  box-shadow: 0 1px 3px rgb(23 57 104 / 0.16);
+}
+
+.kayan-voucher-app .kayan-sheet-ribbon {
+  position: relative;
+  height: 28px;
+  background: var(--voucher-navy);
+  border-radius: 8px 8px 0 0;
+}
+
+.kayan-voucher-app .kayan-sheet-tab {
+  position: absolute;
+  inset-inline-start: 0;
+  top: -14px;
+  bottom: 0;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline-start: 14px;
+  background: var(--voucher-navy);
+  border-radius: 12px 0 0 0;
+  color: #fff;
+}
+
+.kayan-voucher-app .kayan-sheet-tab-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+}
+
+.kayan-voucher-app .kayan-sheet-tab-title {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.kayan-voucher-app .kayan-sheet-panel-body {
+  border: 1px solid var(--voucher-line);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background: #f8fafc;
+  padding: 12px 14px;
+}
+
+/* Ledger */
+.kayan-voucher-app .kayan-sheet-ledger-wrap {
+  overflow-x: auto;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger thead th {
+  background: var(--voucher-navy);
+  color: #fff;
+  padding: 8px 8px;
+  text-align: right;
+  border: 1px solid #6682a3;
+  white-space: nowrap;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger td {
+  border: 1px solid var(--voucher-line);
+  padding: 7px 8px;
+  color: #172b48;
+  background: #f8fafc;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger .col-index {
+  width: 34px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger .col-type {
+  width: 64px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger .col-code {
+  width: 92px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger .col-name {
+  min-width: 150px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger .col-description {
+  min-width: 180px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger .col-currency {
+  width: 56px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger .col-rate {
+  width: 88px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger .col-debit,
+.kayan-voucher-app .kayan-sheet-ledger .col-credit {
+  width: 104px;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger td.is-debit {
+  background: #e3f6e8;
+  font-weight: 800;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger td.is-credit {
+  background: #f8e0e8;
+  font-weight: 800;
+}
+
+.kayan-voucher-app .kayan-sheet-ledger tr.is-placeholder td {
+  background: #eef3f9;
+  color: #5b7ba3;
+}
+
+/* Totals */
+.kayan-voucher-app .kayan-sheet-totals {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.kayan-voucher-app .kayan-sheet-totals-values {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.kayan-voucher-app .kayan-sheet-total {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 168px;
+  min-height: 46px;
+  padding: 6px 12px;
+  border: 1px solid var(--voucher-line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.kayan-voucher-app .kayan-sheet-total-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #1c3a63;
+}
+
+.kayan-voucher-app .kayan-sheet-total-value {
+  font-size: 16px;
+  font-weight: 800;
+  color: #172b48;
+}
+
+.kayan-voucher-app .kayan-sheet-total-value.is-debit {
+  background: #e3f6e8;
+}
+
+.kayan-voucher-app .kayan-sheet-total-value.is-credit {
+  background: #f8e0e8;
+}
+
+.kayan-voucher-app .kayan-sheet-total-value.is-difference {
+  background: #dceaff;
+}
+
+.kayan-voucher-app .kayan-sheet-total-value.has-difference {
+  background: #f6b93b;
+}
+
+.kayan-voucher-app .kayan-sheet-totals-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+.kayan-voucher-app .kayan-sheet-line-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--voucher-line);
+  border-radius: 6px;
+  background: #fff;
+  color: #17355c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.kayan-voucher-app .kayan-sheet-line-btn.add {
+  background: #dceaff;
+}
+
+.kayan-voucher-app .kayan-sheet-line-btn.delete {
+  background: #f8e0e8;
+  color: #a12622;
+}
+
+/* Audit */
+.kayan-voucher-app .kayan-sheet-audit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.kayan-voucher-app .kayan-sheet-audit-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--voucher-line);
+  border-radius: 6px;
+}
+
+.kayan-voucher-app .kayan-sheet-audit-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1c3a63;
+  white-space: nowrap;
+}
+
+.kayan-voucher-app .kayan-sheet-audit-value {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 5px 8px;
+  background: #eef4fb;
+  border: 1px solid var(--voucher-line);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #172b48;
+}
+
+.kayan-voucher-app .kayan-sheet-audit-value.is-success {
+  background: #e3f6e8;
+}
+
+.kayan-voucher-app .kayan-sheet-audit-value.is-warning {
+  background: #fdf3e0;
+}
+
+.kayan-voucher-app .kayan-sheet-audit-value.is-danger {
+  background: #f8e0e8;
+}
+
+.kayan-voucher-app .kayan-sheet-audit-value.is-muted {
+  background: #eef3f9;
+  color: #5b7ba3;
+}
+
+/* Action bar */
+.kayan-voucher-app .kayan-sheet-actionbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline-start: 14px;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--voucher-navy);
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar-title-icon {
+  display: inline-flex;
+  color: #f6b93b;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar-secondary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+  margin-top: -6px;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar .kayan-voucher-actions button {
+  height: 42px;
+  min-width: 110px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar button.bg-brand {
+  background: #075fc9;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar button.bg-state-success {
+  background: #008b59;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar button.bg-danger {
+  background: #d0342c;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar button.bg-surface {
+  background: #17294a;
+  color: #fff;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar button.bg-transparent {
+  background: #cbd8e8;
+  color: #17355c;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar button:disabled {
+  opacity: 0.55;
+}
+
+.kayan-voucher-app .kayan-sheet-actionbar-nav {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kayan-voucher-app .kayan-sheet-nav-arrows {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kayan-voucher-app .kayan-sheet-nav-arrows button {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #b6c4d5;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--voucher-navy);
+}
+
+.kayan-voucher-app .kayan-sheet-nav-arrows button:disabled {
+  opacity: 0.45;
+}
+
+.kayan-voucher-app .kayan-sheet-search-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 200px;
+  height: 38px;
+  border: 1px solid #b6c4d5;
+  border-radius: 6px;
+  background: #fff;
+  padding: 0 10px;
+  color: #174a90;
+}
+
+.kayan-voucher-app .kayan-sheet-search-field input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-size: 12px;
+  color: #172b48;
+}
+
+/* Topbar (voucher) */
+.kayan-voucher-app .kayan-voucher-topbar {
+  position: relative;
+  height: 54px;
+  padding: 0 12px;
+  border: 0;
+  background: var(--voucher-navy);
+  color: #fff;
+  box-shadow: none;
+}
+
+.kayan-voucher-app .kayan-voucher-topbar > div {
+  position: relative;
+  height: 54px;
+}
+
+.kayan-voucher-app .kayan-voucher-topbar-title {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.kayan-voucher-app .kayan-voucher-mobile-menu {
+  display: none;
+}
+
+.kayan-voucher-app .kayan-voucher-window-controls {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: 14px;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 8px;
+}
+
+.kayan-voucher-app .kayan-voucher-window-controls button,
+.kayan-voucher-app .kayan-voucher-window-controls span {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 0.25);
+  border-radius: 6px;
+  background: transparent;
+  color: #cfe0f2;
+}
+
+/* Voucher sidebar */
+.kayan-voucher-app #app-sidebar {
+  background: #102d52;
+}
+
+.kayan-voucher-app #app-sidebar::before {
+  content: none;
+}
+
+.kayan-voucher-app #app-sidebar > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+}
+
+.kayan-voucher-app #app-sidebar > div:first-child > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: 36px;
+  border: 0;
+  background: transparent;
+  color: #cbd8e8;
+}
+
+.kayan-voucher-app #app-sidebar .kayan-vside-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kayan-voucher-app #app-sidebar .kayan-vside-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kayan-voucher-app #app-sidebar .kayan-vside-wordmark {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.kayan-voucher-app #app-sidebar .kayan-vside-wordmark-en {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  color: #fff;
+}
+
+.kayan-voucher-app #app-sidebar .kayan-vside-wordmark-sub {
+  display: flex;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.kayan-voucher-app #app-sidebar .kayan-vside-wordmark-erp {
+  color: #9db6d4;
+}
+
+.kayan-voucher-app #app-sidebar .kayan-vside-wordmark-ar {
+  color: #f6c44b;
+}
+
+.kayan-voucher-app #app-sidebar .kayan-vside-strip {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  background: #8a631c;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav {
+  padding: 12px 10px;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #cbd8e8;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-item:hover {
+  background: rgb(255 255 255 / 0.06);
+  color: #fff;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-item.is-active {
+  background: #f7b91e;
+  color: #132c4f;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgb(255 255 255 / 0.1);
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-group-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #f6c44b;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-inline-start: 12px;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-subitem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #cbd8e8;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-subitem:hover {
+  background: rgb(255 255 255 / 0.06);
+  color: #fff;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-subitem.is-active {
+  background: #f7b91e;
+  color: #132c4f;
+}
+
+.kayan-voucher-app #app-sidebar nav.kayan-vside-nav .kayan-vside-divider {
+  height: 1px;
+  margin: 8px 4px;
+  background: rgb(255 255 255 / 0.12);
 }

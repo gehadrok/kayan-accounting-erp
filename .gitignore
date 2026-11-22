@@ -10,6 +10,9 @@ coverage/
 .pgdata/
 .pglite/
 
+# PHASE 10.0 — runtime-uploaded company logos are deployment state, not source
+uploads/
+
 *.log
 *.db
 *.sqlite
@@ -19,3 +22,16 @@ coverage/
 Thumbs.db
 
 *.zip
+
+# PHASE 10.6.5 — runtime artifacts & diagnostics (not source code)
+.codex/
+.pgdata_backup_corrupted/
+server-*.log
+run_now.log
+server.log
+tmp_diag*.ts
+tmp_diag*.txt
+ref-*.png
+reference-voucher.png
+voucher-pixel-match-brief.md
+kayan-accounting-erp.zip

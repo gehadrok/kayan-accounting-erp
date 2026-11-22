@@ -1,0 +1,169 @@
+/* ============================================================
+   KAYAN ENTERPRISE UI — DESIGN TOKENS
+   ============================================================
+   المرجع المعتمد: شاشة "إدارة العناصر" (Kayan Enterprise UI).
+
+   هذا الملف هو المصدر الوحيد للألوان والمسافات والأحجام والخطوط.
+   أي تعديل على الهوية البصرية يتم هنا أولاً، ثم ينعكس على كل
+   الشاشات التي تستخدم هذه الرموز — بدل تعديل كل صفحة على حدة.
+
+   التصميم لا يعتمد على أي مكتبة خارجية: هذا CSS عادي يقرأه
+   Tailwind عبر `@theme` في src/index.css، ويمكن لأي مكوّن
+   قارئ له مباشرة عبر `var(--kayan-*)`.
+
+   ملاحظة مهمة: الرموز أدناه قيم خام (raw). الرموز الدلالية
+   (semantic) مثل --primary و --border موجودة في :root داخل
+   src/index.css وهي تشير إلى هذه القيم، فتغيير قيمة هنا يغيّر
+   التطبيق كله دفعة واحدة.
+   ============================================================ */
+
+:root {
+  /* ---------- 1. الألوان المعتمدة (Reference palette) ---------- */
+  --kayan-primary: #2563EB;        /* Primary Blue  */
+  --kayan-sidebar: #14213D;        /* Sidebar Navy  */
+  --kayan-page: #F4F7FB;           /* Page Background */
+  --kayan-surface: #FFFFFF;        /* Card Surface  */
+  --kayan-line: #D8E0EB;           /* Border        */
+  --kayan-success: #16A34A;        /* Success       */
+  --kayan-warning: #D97706;        /* Warning       */
+  --kayan-danger: #DC2626;         /* Danger        */
+  --kayan-text: #172554;           /* النص الأساسي   */
+  --kayan-text-muted: #64748B;     /* النص الثانوي   */
+
+  /* ---------- 1.1 ألوان نصّ الحالات (مقروءة على الأسطح الفاتحة) ----------
+     كانت الشاشات تكتب text-emerald-600 و text-rose-600 مباشرة، وهي
+     درجات مصمّمة للمساحات الكبيرة لا لنص 11–12px: تباينها على الأبيض
+     نحو 3.6:1 فقط. هذه الرموز هي "أخضر/أحمر/أصفر/أزرق النص" — أغمق
+     في الفاتح وأفتح في الداكن — وتُستهلك من طبقة الجسر في index.css. */
+  --kayan-success-ink: #15803D;
+  --kayan-warning-ink: #B45309;
+  --kayan-danger-ink: #B91C1C;
+  --kayan-info-ink: #1D4ED8;
+  --kayan-purple-ink: #6D28D9;
+  --kayan-teal-ink: #0F766E;
+
+  /* ---------- 2. مشتقات محسوبة (لا تُعدّل يدوياً) ----------
+     مشتقات لونية تضمن التباين والانسجام:
+     - الحالات الفاتحة (10%) تستخدم color-mix فيتماشى مع لون
+       الحالة نفسه بدل لون ثابت آخر.
+     - لون التركيز (focus) مشتق من Primary فلا ينحرف عنه. */
+  --kayan-primary-hover: #1D4ED8;
+  --kayan-primary-active: #1E40AF;
+  --kayan-primary-soft: color-mix(in srgb, var(--kayan-primary) 8%, transparent);
+  --kayan-primary-soft-strong: color-mix(in srgb, var(--kayan-primary) 14%, transparent);
+  --kayan-primary-ring: color-mix(in srgb, var(--kayan-primary) 25%, transparent);
+
+  --kayan-success-soft: color-mix(in srgb, var(--kayan-success) 10%, transparent);
+  --kayan-success-hover: color-mix(in srgb, var(--kayan-success) 85%, black);
+  --kayan-warning-soft: color-mix(in srgb, var(--kayan-warning) 10%, transparent);
+  --kayan-warning-hover: color-mix(in srgb, var(--kayan-warning) 85%, black);
+  --kayan-danger-soft: color-mix(in srgb, var(--kayan-danger) 10%, transparent);
+  --kayan-danger-hover: color-mix(in srgb, var(--kayan-danger) 85%, black);
+
+  /* أسطح محايدة */
+  --kayan-surface-muted: #F8FAFC;  /* رأس الجدول، المناطق الخافتة */
+  --kayan-surface-hover: #F1F5F9;  /* تمرير المؤشر على الصف        */
+  --kayan-surface-sunken: #EEF2F7;  /* الحقول المقروءة، الأشرطة    */
+
+  /* حدود */
+  --kayan-line-soft: color-mix(in srgb, var(--kayan-line) 60%, transparent);
+  --kayan-line-strong: #B9C6D9;    /* حدود مُبرزة للجداول والحقول النشطة */
+
+  /* ---------- 3. الخطوط ---------- */
+  /* Cairo أولاً، ثم بدائل مناسبة لأنواع المحتوى المختلطة
+     (أرقام لاتينية داخل نص عربي تستفيد من أرقام جدولية
+     lining/tabular من Geist عند توفره). */
+  --kayan-font-ui: "Cairo", "Segoe UI", "Noto Sans Arabic", "Tahoma", sans-serif;
+  --kayan-font-numeric: "Cairo", "Geist Variable", "Segoe UI", sans-serif;
+
+  /* مقاسات الخط */
+  --kayan-text-2xs: 0.6875rem;   /* 11px */
+  --kayan-text-xs: 0.75rem;      /* 12px */
+  --kayan-text-sm: 0.8125rem;    /* 13px */
+  --kayan-text-base: 0.875rem;   /* 14px — افتراضي الواجهة */
+  --kayan-text-md: 1rem;         /* 16px */
+  --kayan-text-lg: 1.125rem;     /* 18px */
+  --kayan-text-xl: 1.375rem;     /* 22px — عنوان البطاقة/النافذة */
+
+  /* ---------- 4. المقاسات (Spec: 40–44px للأزرار العادية) ---------- */
+  --kayan-control-xs: 32px;   /* داخل الجداول */
+  --kayan-control-sm: 36px;   /* أزرار ثانوية صغيرة */
+  --kayan-control-md: 42px;   /* افتراضي الحقول والأزرار — داخل 40–44 */
+  --kayan-control-lg: 44px;   /* الإجراءات الرئيسية */
+  --kayan-icon-btn: 34px;
+
+  /* ---------- 5. نصف القطر (Spec: 10–14px للبطاقات) ---------- */
+  --kayan-radius-sm: 6px;
+  --kayan-radius-md: 8px;
+  --kayan-radius-control: 10px;   /* الحقول والأزرار */
+  --kayan-radius-card: 12px;      /* البطاقات — داخل 10–14 */
+  --kayan-radius-dialog: 14px;
+  --kayan-radius-pill: 999px;
+
+  /* ---------- 6. الظلال (خفيفة، دون مبالغة) ---------- */
+  --kayan-shadow-xs: 0 1px 2px 0 rgb(23 37 84 / 0.04);
+  --kayan-shadow-sm: 0 1px 3px 0 rgb(23 37 84 / 0.06), 0 1px 2px -1px rgb(23 37 84 / 0.04);
+  --kayan-shadow-md: 0 4px 12px -2px rgb(23 37 84 / 0.08), 0 2px 4px -2px rgb(23 37 84 / 0.04);
+  --kayan-shadow-lg: 0 12px 32px -8px rgb(23 37 84 / 0.14), 0 4px 8px -4px rgb(23 37 84 / 0.06);
+  --kayan-ring: 0 0 0 3px var(--kayan-primary-ring);
+  --kayan-ring-danger: 0 0 0 3px color-mix(in srgb, var(--kayan-danger) 22%, transparent);
+
+  /* ---------- 7. المسافات ---------- */
+  --kayan-space-1: 4px;
+  --kayan-space-2: 8px;
+  --kayan-space-3: 12px;
+  --kayan-space-4: 16px;
+  --kayan-space-5: 20px;
+  --kayan-space-6: 24px;
+  --kayan-space-8: 32px;
+
+  /* ---------- 8. شريط التنقل العلوي ---------- */
+  --kayan-topbar-h: 60px;
+  --kayan-sidebar-w: 256px;
+  --kayan-sidebar-w-collapsed: 72px;
+}
+
+/* ============================================================
+   الوضع الداكن — مدعوم فعلاً عبر إعداد ui.theme
+   ------------------------------------------------------------
+   لا يغيّر السلوك الافتراضي (فاتح). نفس أسماء الرموز ونفس
+   البنية، حتى لا يحتاج أي مكوّن إلى مسار منفصل لكل وضع.
+   ============================================================ */
+.dark {
+  --kayan-page: #0B1220;
+  --kayan-surface: #131C2E;
+  --kayan-surface-muted: #182338;
+  --kayan-surface-hover: #1D2A42;
+  --kayan-surface-sunken: #0F1828;
+
+  --kayan-line: #2A3852;
+  --kayan-line-soft: color-mix(in srgb, var(--kayan-line) 65%, transparent);
+  --kayan-line-strong: #3A4A68;
+
+  --kayan-text: #E8EEF9;
+  --kayan-text-muted: #94A3B8;
+
+  --kayan-sidebar: #0A1224;
+
+  --kayan-primary: #3B82F6;
+  --kayan-primary-hover: #2563EB;
+  --kayan-primary-active: #1D4ED8;
+
+  --kayan-success: #22C55E;
+  --kayan-warning: #F59E0B;
+  --kayan-danger: #EF4444;
+
+  /* نص الحالات في الداكن: درجات فاتحة عالية الإضاءة بدل 600/700
+     الغامقة التي تختفي على سطح داكن. */
+  --kayan-success-ink: #4ADE80;
+  --kayan-warning-ink: #FBBF24;
+  --kayan-danger-ink: #F87171;
+  --kayan-info-ink: #93C5FD;
+  --kayan-purple-ink: #C4B5FD;
+  --kayan-teal-ink: #5EEAD4;
+
+  --kayan-shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.28);
+  --kayan-shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.34);
+  --kayan-shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.42);
+  --kayan-shadow-lg: 0 12px 32px -8px rgb(0 0 0 / 0.55);
+}

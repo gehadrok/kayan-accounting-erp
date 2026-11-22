@@ -1,0 +1,177 @@
+﻿
+/* ============================================================
+   PHASE 10.0 — Company identity & shared bilingual report header
+   ============================================================
+   Layout contract: Arabic LEFT, logo dead-centre, English RIGHT.
+
+   The logo is positioned against the PAGE, not against the gap between the
+   two text blocks:
+     .kayan-report-header  → position: relative (full page width)
+     .kayan-rh-logo-slot   → position: absolute; left: 50%; translateX(-50%)
+
+   The text columns sit in a grid whose middle track is a FIXED gap, so a long
+   name on either side can grow inward only up to that reserved space and can
+   never overlap the logo or the opposite language.
+   ============================================================ */
+
+.kayan-report-header {
+  position: relative;
+  width: 100%;
+  direction: rtl;
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+  border-bottom: 2px solid #1e3a8a;
+}
+
+.kayan-rh-grid {
+  display: grid;
+  /* PHYSICAL column order, identical to the standalone print/PDF header.
+     The page is dir="rtl", and in RTL a grid's column 1 renders on the RIGHT —
+     which would silently swap the two languages and let them collide. The grid
+     container is therefore pinned to LTR so column numbers mean literally
+     left/right, while each column restores its own text direction below.
+
+Final contract: ENGLISH at the FAR LEFT, logo dead-centre,
+      ARABIC at the FAR RIGHT. */
+  direction: ltr;
+  /* outer columns share the free space equally; the middle track is reserved */
+  grid-template-columns: 1fr var(--kayan-rh-gap, 120px) 1fr;
+  align-items: start;
+  column-gap: 10px;
+  /* The three cells are placed by grid-COLUMN only (see below), so they share
+     one row and stay side by side. Without this, `grid-row: auto` +
+     `grid-column: <n>` under SPARSE auto-placement sends every item to a
+     separate row: the first item takes row 1, the next one cannot fit the
+     column it was told to use in that row and is pushed to the next row, and
+     so on. The English block therefore ended up BELOW the Arabic one instead
+     of beside it. Pinning every cell to row 1 is what makes the columns line
+     up as the layout contract above describes. */
+  grid-template-rows: auto;
+}
+
+.kayan-rh-col {
+  min-width: 0;                 /* lets long words shrink instead of overflowing */
+  font-family: 'Cairo', system-ui, sans-serif;
+  line-height: 1.55;
+}
+
+.kayan-rh-ar {
+  grid-column: 3;               /* physically FAR RIGHT, regardless of page direction */
+  grid-row: 1;                  /* same row as English — see .kayan-rh-grid */
+  text-align: right;            /* flush to the right edge, inside the right column */
+  direction: rtl;               /* Arabic text itself still reads RTL */
+}
+
+.kayan-rh-en {
+  grid-column: 1;               /* physically FAR LEFT, regardless of page direction */
+  grid-row: 1;                  /* same row as Arabic — see .kayan-rh-grid */
+  text-align: left;             /* flush to the left edge, inside the left column */
+  direction: ltr;
+  font-family: 'Cairo', system-ui, sans-serif;
+}
+
+.kayan-rh-gap { grid-column: 2; grid-row: 1; }
+
+.kayan-rh-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.kayan-rh-sub {
+  font-size: 11.5px;
+  color: #475569;
+  font-weight: 600;
+}
+
+.kayan-rh-line {
+  font-size: 10.5px;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+.kayan-rh-logo-slot {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--kayan-rh-gap, 120px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* Transparency + aspect ratio preserved: only scaled down, never stretched. */
+.kayan-rh-logo {
+  max-width: 100%;
+  max-height: 76px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.kayan-rh-title {
+  text-align: center;
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-top: 10px;
+}
+
+.kayan-rh-subtitle {
+  text-align: center;
+  font-size: 11px;
+  color: #475569;
+  margin-top: 3px;
+}
+
+/* Compact variant for dense reports (statements, ledgers, item listings). */
+.kayan-rh-compact .kayan-rh-name { font-size: 13px; }
+.kayan-rh-compact .kayan-rh-line { font-size: 9.5px; }
+.kayan-rh-compact .kayan-rh-logo { max-height: 54px; }
+.kayan-rh-compact.kayan-report-header { --kayan-rh-gap: 92px; }
+.kayan-rh-compact .kayan-rh-grid { grid-template-columns: 1fr var(--kayan-rh-gap, 92px) 1fr; }
+.kayan-rh-compact .kayan-rh-logo-slot { width: var(--kayan-rh-gap, 92px); }
+
+/* Screen: a subtle frame so the header is legible inside the app too. */
+@media screen {
+  .kayan-report-header {
+    background: #ffffff;
+    border-radius: 10px;
+  }
+}
+
+/* ---------- Print / PDF ---------- */
+@media print {
+  .kayan-report-header {
+    border-bottom: 1.5pt solid #1e3a8a;
+    margin-bottom: 8pt;
+    padding-bottom: 6pt;
+    /* never split the identity across pages */
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .kayan-rh-name { font-size: 12.5pt; }
+  .kayan-rh-sub  { font-size: 9pt; }
+  .kayan-rh-line { font-size: 8pt; }
+  .kayan-rh-title { font-size: 12pt; }
+
+  /* logos are artwork, not UI chrome — force them to print */
+  .kayan-rh-logo,
+  .kayan-rh-logo-slot {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .kayan-rh-logo-slot { width: var(--kayan-rh-gap, 120px); }
+  .kayan-rh-logo { max-height: 20mm; }
+
+  /* Upload widgets / controls must never reach the sheet. */
+  .kayan-no-print,
+  .no-print {
+    display: none !important;
+  }
+}

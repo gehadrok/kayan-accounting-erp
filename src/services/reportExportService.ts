@@ -1,4 +1,37 @@
-import { ReportDefinition } from './reportRegistry';
+import { ReportDefinition, formatReportValue } from './reportRegistry';
+
+/**
+ * PHASE 10.0 — identity for the standalone print window.
+ *
+ * This service renders its own document into a new window, so it cannot use the
+ * React ReportHeader component. It receives the SAME profile object from the
+ * central context and reuses the identical layout contract and CSS, so the PDF
+ * output matches the in-app header rather than drifting from it.
+ */
+export interface PrintIdentity {
+  nameAr: string;
+  legalNameAr?: string | null;
+  addressAr?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  taxNumber?: string | null;
+  nameEn?: string | null;
+  addressEn?: string | null;
+  phoneEn?: string | null;
+  emailEn?: string | null;
+  website?: string | null;
+  commercialRegistration?: string | null;
+  logoUrl?: string | null;
+}
+
+/** Escapes text before it is interpolated into the print document. */
+function esc(v: unknown): string {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 export class ReportExportService {
   /**
@@ -11,6 +44,9 @@ export class ReportExportService {
     }
 
     const headers = reportDef.columns.map(c => `"${c.label}"`).join(',');
+    // PHASE 10.5.1: data exports (CSV/XLSX) intentionally keep RAW values —
+    // screen/preview/print apply the format settings, a CSV stays machine-
+    // readable (canonical 2-decimal numbers, no separators or symbols).
     const rows = data.map(item => {
       return reportDef.columns.map(col => {
         let val = item[col.key];
@@ -65,6 +101,7 @@ export class ReportExportService {
             </tr>
           </thead>
           <tbody>
+            ${/* PHASE 10.5.1: raw values on purpose — same policy as CSV. */ ''}
             ${data.map(item => `
               <tr>
                 ${reportDef.columns.map(c => `<td>${item[c.key] !== undefined ? item[c.key] : ''}</td>`).join('')}
@@ -89,19 +126,28 @@ export class ReportExportService {
   /**
    * Export to PDF (triggers print layout configured for PDF save)
    */
-  static exportToPdf(reportDef: ReportDefinition, data: any[], filtersApplied: Record<string, any> = {}) {
-    this.printReport(reportDef, data, filtersApplied);
+  static exportToPdf(reportDef: ReportDefinition, data: any[], filtersApplied: Record<string, any> = {}, identity?: PrintIdentity | null) {
+    this.printReport(reportDef, data, filtersApplied, identity);
   }
 
   /**
-   * Professional Print Preview & PDF Layout
+   * Professional Print Preview & PDF Layout.
+   * `identity` is the centrally-loaded company profile; when it is missing the
+   * header degrades to an empty reserved layout (no invented company data).
    */
-  static printReport(reportDef: ReportDefinition, data: any[], filtersApplied: Record<string, any> = {}) {
+  static printReport(reportDef: ReportDefinition, data: any[], filtersApplied: Record<string, any> = {}, identity?: PrintIdentity | null) {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       alert('الرجاء السماح بفتح النوافذ المنبثقة للطباعة والمعاينة');
       return;
     }
+
+    // PHASE 10.0: the logo is served over the API, so a relative URL must be
+    // resolved against the app origin for the print window to load it.
+    const id = identity || null;
+    const logo = id?.logoUrl
+      ? (id.logoUrl.startsWith('http') ? id.logoUrl : `${window.location.origin}${id.logoUrl}`)
+      : null;
 
     const html = `
       <!DOCTYPE html>
@@ -120,23 +166,38 @@ export class ReportExportService {
             direction: rtl;
           }
           .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            position: relative;
+            display: grid;
+            /* PHYSICAL layout, decided once and shared with the in-app header:
+               Arabic at the FAR RIGHT edge, logo dead-centre, English at the
+               FAR LEFT edge. The print document is dir="rtl", where a grid's
+               column 1 renders on the RIGHT — pinning the container to ltr is
+               what makes the column numbers below mean "left/right" literally
+               instead of logically. Each column then restores its own text
+               direction, so Arabic still reads right-to-left. */
+            direction: ltr;
+            grid-template-columns: 1fr 120px 1fr;
+            column-gap: 10px;
+            align-items: start;
             border-bottom: 2px solid #1e3a8a;
-            padding-bottom: 15px;
-            margin-bottom: 20px;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
           }
-          .company-info h1 {
-            font-size: 20px;
-            color: #1e3a8a;
-            margin: 0 0 5px 0;
+          .rh-col { min-width: 0; line-height: 1.55; }
+          /* Both blocks are pinned to row 1. Placing them by grid-COLUMN alone
+             lets grid auto-placement cascade them into separate rows (the next
+             item cannot fit the column it was given in the row just filled, so
+             it drops to the next row) — which is what pushed the English block
+             BELOW the Arabic one instead of beside it. */
+          .rh-ar { grid-column: 3; grid-row: 1; text-align: right; direction: rtl; }
+          .rh-en { grid-column: 1; grid-row: 1; text-align: left; direction: ltr; }
+          .rh-name { font-size: 15px; font-weight: 800; color: #0f172a; overflow-wrap: anywhere; }
+          .rh-line { font-size: 10.5px; color: #64748b; overflow-wrap: anywhere; }
+          .rh-logo-slot {
+            position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+            width: 120px; display: flex; align-items: center; justify-content: center;
           }
-          .company-info p {
-            font-size: 12px;
-            color: #64748b;
-            margin: 0;
-          }
+          .rh-logo { max-width: 100%; max-height: 64px; width: auto; height: auto; object-fit: contain; }
           .report-meta {
             text-align: left;
             font-size: 12px;
@@ -194,18 +255,27 @@ export class ReportExportService {
       </head>
       <body>
         <div class="header">
-          <div class="company-info">
-            <h1>شركة كيان للتجارة والتوزيع</h1>
-            <p>نظام التخطيط المؤسسي ERP — المركز المالي والمحاسبي</p>
+          <div class="rh-col rh-ar" dir="rtl">
+            <div class="rh-name">${esc(id?.nameAr || '')}</div>
+            ${id?.addressAr ? `<div class="rh-line">${esc(id.addressAr)}</div>` : ''}
+            ${id ? `<div class="rh-line">${esc([id.phone, id.email].filter(Boolean).join('  •  '))}</div>` : ''}
+            ${id ? `<div class="rh-line">${esc([id.website, id.commercialRegistration && 'س.ت: ' + id.commercialRegistration].filter(Boolean).join('  •  '))}</div>` : ''}
+            ${id?.taxNumber ? `<div class="rh-line">الرقم الضريبي: ${esc(id.taxNumber)}</div>` : ''}
           </div>
-          <div class="report-meta">
-            <div><strong>تاريخ الإصدار:</strong> ${new Date().toLocaleDateString('ar-YE')}</div>
-            <div><strong>الوقت:</strong> ${new Date().toLocaleTimeString('ar-YE')}</div>
+          <div class="rh-col rh-en" dir="ltr">
+            <div class="rh-name">${esc(id?.nameEn || id?.nameAr || '')}</div>
+            ${id ? `<div class="rh-line">${esc(id.addressEn || id.addressAr || '')}</div>` : ''}
+            ${id ? `<div class="rh-line">${esc([id.phoneEn || id.phone, id.emailEn || id.email].filter(Boolean).join('  •  '))}</div>` : ''}
+            ${id ? `<div class="rh-line">${esc([id.website, id.commercialRegistration && 'CR: ' + id.commercialRegistration].filter(Boolean).join('  •  '))}</div>` : ''}
+            ${id?.taxNumber ? `<div class="rh-line">Tax No: ${esc(id.taxNumber)}</div>` : ''}
+          </div>
+          <div class="rh-logo-slot">
+            ${logo ? `<img class="rh-logo" src="${esc(logo)}" alt="logo">` : ''}
           </div>
         </div>
 
-        <div class="report-title">${reportDef.name}</div>
-        <div class="report-desc">${reportDef.description}</div>
+        <div class="report-title">${esc(reportDef.name)}</div>
+        <div class="report-desc">${esc(reportDef.description)}</div>
 
         <table>
           <thead>
@@ -216,7 +286,7 @@ export class ReportExportService {
           <tbody>
             ${data.map(row => `
               <tr>
-                ${reportDef.columns.map(c => `<td>${row[c.key] !== undefined ? row[c.key] : ''}</td>`).join('')}
+                ${reportDef.columns.map(c => `<td>${row[c.key] !== undefined ? formatReportValue(row[c.key], c.format) : ''}</td>`).join('')}
               </tr>
             `).join('')}
           </tbody>

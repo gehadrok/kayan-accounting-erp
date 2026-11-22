@@ -180,8 +180,67 @@ async function runSettingsTests() {
   assert.strictEqual(countBefore, countAfter, '14. Historical posted journal entries completely untouched');
   console.log('✅ [PASS] 14. Historical Transactions and posted journals 100% protected');
 
+  // -------------------------------------------------------------
+  // Test 11: PHASE 10.5.1 — System & UI preference keys (V25)
+  // -------------------------------------------------------------
+  console.log('\n--- Test 11: Phase 10.5.1 UI Preference Keys (V25) ---');
+  const v25Defaults: Array<[string, any]> = [
+    ['ui.theme', 'light'],
+    ['ui.density', 'comfortable'],
+    ['ui.date_format', 'YYYY-MM-DD'],
+    ['ui.thousands_separator', 'comma'],
+    ['ui.decimal_separator', 'dot'],
+    ['reports.currency_position', 'after'],
+    ['ui.confirm_before_post', true],
+    ['ui.lookup_debounce_ms', 200],
+    ['ui.notify_save_success', true],
+  ];
+  for (const [key, expected] of v25Defaults) {
+    const val = await SettingsService.getSetting(key);
+    assert.deepStrictEqual(val, expected, `15. ${key} seeded with default ${JSON.stringify(expected)}`);
+  }
+  console.log(`✅ [PASS] 15. All ${v25Defaults.length} V25 preference keys seeded with correct defaults`);
+
+  // Round-trip through set → get → reset (STRING + INTEGER examples)
+  await SettingsService.setSetting('ui.theme', 'dark', { companyId, reason: 'Phase 10.5.1 roundtrip' });
+  assert.strictEqual(await SettingsService.getSetting<string>('ui.theme'), 'dark', '16. ui.theme roundtrip (set→get)');
+  await SettingsService.resetSetting('ui.theme', companyId);
+  assert.strictEqual(await SettingsService.getSetting<string>('ui.theme'), 'light', '16.1 ui.theme reset to default light');
+
+  await SettingsService.setSetting('ui.lookup_debounce_ms', 400, { companyId, reason: 'Phase 10.5.1 roundtrip' });
+  assert.strictEqual(await SettingsService.getSetting<number>('ui.lookup_debounce_ms'), 400, '17. ui.lookup_debounce_ms INTEGER roundtrip');
+  await SettingsService.resetSetting('ui.lookup_debounce_ms', companyId);
+  assert.strictEqual(await SettingsService.getSetting<number>('ui.lookup_debounce_ms'), 200, '17.1 ui.lookup_debounce_ms reset to 200');
+  console.log('✅ [PASS] 16-17. New preference keys round-trip and reset correctly');
+
+  // Type validation applies to the new BOOLEAN keys too
+  let boolRejected = false;
+  try {
+    await SettingsService.setSetting('ui.confirm_before_post', 'definitely', { companyId, reason: 'bad type probe' });
+  } catch (err: any) {
+    boolRejected = err.message.includes('منطقية');
+  }
+  assert.strictEqual(boolRejected, true, '18. BOOLEAN validation rejects a non-boolean ui.confirm_before_post');
+  console.log('✅ [PASS] 18. V25 BOOLEAN keys enforce type validation');
+
+  // Keys whose controls were replaced by "unsupported" labels must NOT exist:
+  // a key without a consumer would be a fake setting.
+  let fakeKeyRejected = false;
+  try {
+    await SettingsService.setSetting('ui.session_lock_minutes', 15, { companyId, reason: 'fake key probe' });
+  } catch (err: any) {
+    fakeKeyRejected = err.message.includes('غير موجود');
+  }
+  assert.strictEqual(fakeKeyRejected, true, '19. ui.session_lock_minutes was NOT seeded (no consumer exists)');
+  console.log('✅ [PASS] 19. No fake setting keys were seeded without a real consumer');
+
+  // The pre-existing key the sales service now reads when posting an invoice
+  const autoIssue = await SettingsService.getSetting<boolean>('inventory.auto_create_issue_on_sale');
+  assert.strictEqual(autoIssue, true, '20. inventory.auto_create_issue_on_sale defaults to true');
+  console.log('✅ [PASS] 20. Auto stock-issue gate key exists with default true (behaviour unchanged by default)');
+
   console.log('\n================================================================');
-  console.log('🎉 ALL 14 SETTINGS HUB TESTS PASSED SUCCESSFULLY (Zero Defect)');
+  console.log('🎉 ALL SETTINGS HUB TESTS PASSED SUCCESSFULLY (Zero Defect)');
   console.log('================================================================');
 }
 

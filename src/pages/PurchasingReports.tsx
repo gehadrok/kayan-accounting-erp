@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useCompanyProfile } from '../context/CompanyProfileContext';
+import { ReportHeader } from '../components/company/ReportHeader';
 import { 
   FileText, 
   Printer, 
@@ -13,6 +15,8 @@ import {
 } from 'lucide-react';
 
 export const PurchasingReportsPage: React.FC = () => {
+  // PHASE 10.0 — company identity from the single central source
+  const { company } = useCompanyProfile();
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
   const [statement, setStatement] = useState<any>(null);
@@ -170,18 +174,19 @@ export const PurchasingReportsPage: React.FC = () => {
 
           {/* Detailed Statement Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 print:border-none print:shadow-none print:p-0">
-            <div className="border-b border-slate-200 pb-4 mb-4 flex justify-between items-start">
-              <div>
-                <h2 className="text-base font-black text-slate-800">كشف حساب مورد معتمد (Supplier Subledger Statement)</h2>
-                <p className="text-xs text-slate-500">حركات الفواتير (دائن تزيد المديونية) وسندات الصرف (مدين تسدد المديونية)</p>
+            {/* PHASE 10.0 — shared identity header */}
+            <ReportHeader
+              company={company}
+              title="كشف حساب مورد معتمد (Supplier Subledger Statement)"
+              subtitle="حركات الفواتير (دائن تزيد المديونية) وسندات الصرف (مدين تسدد المديونية)"
+              compact
+            />
+            {statement?.supplier && (
+              <div className="text-left font-mono text-xs text-slate-500 mb-4">
+                <div className="font-bold text-slate-800">{statement.supplier.name}</div>
+                <div>كود المورد: {statement.supplier.code}</div>
               </div>
-              {statement?.supplier && (
-                <div className="text-left font-mono text-xs text-slate-500">
-                  <div className="font-bold text-slate-800">{statement.supplier.name}</div>
-                  <div>كود المورد: {statement.supplier.code}</div>
-                </div>
-              )}
-            </div>
+            )}
 
             <div className="overflow-x-auto">
               <table className="w-full text-right text-xs">

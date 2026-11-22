@@ -31,6 +31,13 @@ export class FinancialIntegrityService {
   /**
    * Helper: fetches GL balance for given account codes up to asOfDate
    */
+  /**
+   * PHASE 10.3 — GL side of every module reconciliation.
+   *
+   * Uses the in-ledger contract `IN ('POSTED','REVERSED')`: a reversed entry
+   * and its compensating POSTED entry must both be counted, or the pair leaves
+   * a phantom in the ledger instead of netting to zero.
+   */
   private static async getGlBalance(accountCodes: string[], asOfDate?: string, isCreditNormal = false) {
     const db = await getDb();
     const placeholders = accountCodes.map((_, i) => `$${i + 1}`).join(', ');
@@ -47,7 +54,7 @@ export class FinancialIntegrityService {
       FROM accounting.journal_entry_lines jel
       JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
       JOIN accounting.accounts a ON a.id = jel.account_id
-      WHERE je.status = 'POSTED' AND a.code IN (${placeholders}) ${dateCond}
+      WHERE je.status IN ('POSTED', 'REVERSED') AND a.code IN (${placeholders}) ${dateCond}
     `, params);
 
     const dr = parseFloat(res.rows[0]?.dr || '0');
@@ -89,10 +96,19 @@ export class FinancialIntegrityService {
     });
 
     // 2. Accounts Receivable Reconciliation (Customer Balances vs GL 1103)
+    // PHASE 10.3: `SUM(total - paid_amount)` was returns-blind and
+    // allocation-blind — it ignored posted sales returns entirely and only
+    // netted the ALLOCATED part of a receipt, while the receipt journal
+    // debits receivables by the FULL voucher. It now mirrors the GL exactly:
+    // credit invoices, less posted receipts, less posted sales returns.
     const arRes = await db.query<any>(`
-      SELECT COALESCE(SUM(total - paid_amount), 0) as total
-      FROM sales.sales_invoices
-      WHERE status = 'POSTED' AND payment_type = 'CREDIT' AND invoice_date <= $1
+      SELECT
+        COALESCE((SELECT SUM(total) FROM sales.sales_invoices
+                   WHERE status = 'POSTED' AND payment_type = 'CREDIT' AND invoice_date <= $1), 0)
+        - COALESCE((SELECT SUM(amount) FROM sales.receipts
+                    WHERE status = 'POSTED' AND receipt_date <= $1), 0)
+        - COALESCE((SELECT SUM(total) FROM sales.sales_returns
+                    WHERE status = 'POSTED' AND return_date <= $1), 0) AS total
     `, [dateLimit]);
     const arSubledger = parseFloat(arRes.rows[0]?.total || '0');
     const arGl = await this.getGlBalance(['1103'], dateLimit, false);
@@ -107,10 +123,15 @@ export class FinancialIntegrityService {
     });
 
     // 3. Accounts Payable Reconciliation (Supplier Balances vs GL 2101)
+    // Same canonical movements as PurchasingService.getApMovementTotals().
     const apRes = await db.query<any>(`
-      SELECT COALESCE(SUM(total - paid_amount), 0) as total
-      FROM purchasing.purchase_invoices
-      WHERE status = 'POSTED' AND payment_type = 'CREDIT' AND invoice_date <= $1
+      SELECT
+        COALESCE((SELECT SUM(total) FROM purchasing.purchase_invoices
+                   WHERE status = 'POSTED' AND payment_type = 'CREDIT' AND invoice_date <= $1), 0)
+        - COALESCE((SELECT SUM(amount) FROM purchasing.payments
+                    WHERE status = 'POSTED' AND payment_date <= $1), 0)
+        - COALESCE((SELECT SUM(total) FROM purchasing.purchase_returns
+                    WHERE status = 'POSTED' AND return_date <= $1), 0) AS total
     `, [dateLimit]);
     const apSubledger = parseFloat(apRes.rows[0]?.total || '0');
     const apGl = await this.getGlBalance(['2101'], dateLimit, true);

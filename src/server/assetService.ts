@@ -1255,7 +1255,7 @@ export class AssetService {
       FROM accounting.journal_entry_lines jl
       JOIN accounting.journal_entries je ON je.id = jl.journal_entry_id
       JOIN accounting.accounts a ON a.id = jl.account_id
-      WHERE a.code LIKE '120%' AND je.status = 'POSTED'
+      WHERE a.code LIKE '120%' AND je.status IN ('POSTED', 'REVERSED')
     `);
     const glAssetCost = parseFloat(glAssetCostRes.rows[0]?.balance || '0');
 
@@ -1265,7 +1265,7 @@ export class AssetService {
       FROM accounting.journal_entry_lines jl
       JOIN accounting.journal_entries je ON je.id = jl.journal_entry_id
       JOIN accounting.accounts a ON a.id = jl.account_id
-      WHERE (a.code LIKE '129%' OR a.code = '1290') AND je.status = 'POSTED'
+      WHERE (a.code LIKE '129%' OR a.code = '1290') AND je.status IN ('POSTED', 'REVERSED')
     `);
     const glAccDepr = parseFloat(glAccDeprRes.rows[0]?.balance || '0');
 

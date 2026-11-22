@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useCompanyProfile } from '../context/CompanyProfileContext';
+import { ReportHeader } from '../components/company/ReportHeader';
 import { 
   BookMarked, 
   Search, 
@@ -11,6 +13,8 @@ import {
 } from 'lucide-react';
 
 export const GeneralLedgerPage: React.FC = () => {
+  // PHASE 10.0 — company identity from the single central source
+  const { company } = useCompanyProfile();
   const [report, setReport] = useState<any>(null);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
@@ -56,8 +60,12 @@ export const GeneralLedgerPage: React.FC = () => {
   }, [selectedAccountId, fromDate, toDate]);
 
   return (
-    <div className="space-y-5 animate-in fade-in duration-200" dir="rtl">
-      {/* Top Header */}
+<div className="space-y-5 animate-in fade-in duration-200" dir="rtl">
+        {/* PHASE 10.0 — print-only shared identity header (screen layout untouched) */}
+        <div className="hidden print:block">
+          <ReportHeader company={company} title="الأستاذ العام (General Ledger)" compact />
+        </div>
+        {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs print:hidden">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-linear-to-tr from-indigo-700 to-blue-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20">

@@ -230,6 +230,71 @@ async function runPurchasingTests() {
   }
 
   // ----------------------------------------------------
+  // Test 5b: A posted purchase return must appear in the statement
+  // ----------------------------------------------------
+  // Regression guard. The statement used to be a 2-way UNION over
+  // purchase_invoices + payments, so a posted purchase return was silently
+  // dropped and the supplier kept showing the full invoiced balance. The
+  // sales-side counterpart has always carried its RETURN leg (asserted in
+  // phase91.test.ts); this is the purchase-side twin of that assertion.
+  console.log('\n--- 5b. Purchase Return in Supplier Statement ---');
+  try {
+    const before = await PurchasingService.getSupplierStatement(supplierId);
+    const balanceBefore = before.finalBalance;
+
+    // Same header shape that POST /purchasing/returns inserts. The return
+    // endpoint itself lives in the HTTP layer; the phase93/94 suites already
+    // cover that it writes these rows, so what is under test here is that the
+    // statement READS them.
+    const srcRes = await db.query<any>(
+      `SELECT id, company_id, branch_id, invoice_date
+         FROM purchasing.purchase_invoices
+        WHERE supplier_id = $1 AND status = 'POSTED'
+        ORDER BY invoice_date ASC LIMIT 1`,
+      [supplierId]
+    );
+    const src = srcRes.rows[0];
+    assert(!!src, 'Found a posted invoice to build the return against');
+
+    const RETURN_TOTAL = 15000;
+    const returnNumber = `PR-T-${Date.now().toString().slice(-6)}`;
+    await db.query<any>(
+      `INSERT INTO purchasing.purchase_returns
+         (company_id, branch_id, return_number, supplier_id, original_invoice_id,
+          return_date, subtotal, tax, total, status, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $7, 'POSTED', $8)`,
+      [src.company_id, src.branch_id, returnNumber, supplierId, src.id,
+       src.invoice_date, RETURN_TOTAL, 'Regression: return visibility in statement']
+    );
+
+    const after = await PurchasingService.getSupplierStatement(supplierId);
+    const returnRow: any = after.items.find((i: any) => i.type === 'RETURN');
+
+    assert(!!returnRow, 'Supplier Statement contains the posted purchase return');
+    assert(returnRow?.docNumber === returnNumber, `Statement shows return number ${returnNumber}`, JSON.stringify(returnRow));
+    assert(returnRow?.debit === RETURN_TOTAL && returnRow?.credit === 0,
+      'Return is a DEBIT against the supplier, mirroring the payment leg',
+      JSON.stringify(returnRow));
+    assert(after.finalBalance === balanceBefore - RETURN_TOTAL,
+      `Statement balance reduced by the return: ${balanceBefore} -> ${balanceBefore - RETURN_TOTAL} (got ${after.finalBalance})`);
+
+    // The balance printed on the supplier card sits next to the statement on the
+    // same screen, so it must not contradict it.
+    const suppAfterReturn = await PurchasingService.getSupplierById(supplierId);
+    assert(parseFloat(suppAfterReturn.outstandingBalance) === balanceBefore - RETURN_TOTAL,
+      `outstandingBalance nets the return too (got ${suppAfterReturn.outstandingBalance})`);
+
+    // Remove the fixture: it was never posted to the GL, so leaving it behind
+    // would make the AP reconciliation test below legitimately report a
+    // subledger/GL difference caused by the test harness, not by the app.
+    await db.query('DELETE FROM purchasing.purchase_returns WHERE return_number = $1', [returnNumber]);
+    const restored = await PurchasingService.getSupplierStatement(supplierId);
+    assert(restored.finalBalance === balanceBefore, 'Statement balance restored after fixture cleanup');
+  } catch (err: any) {
+    assert(false, 'Purchase Return Statement Test Failed', err.message);
+  }
+
+  // ----------------------------------------------------
   // Test 6: Accounts Payable Aging Report
   // ----------------------------------------------------
   console.log('\n--- 6. AP Aging Report Tests ---');

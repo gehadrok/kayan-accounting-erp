@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" role="img" aria-labelledby="heroTitle">
+  <title id="heroTitle">أفق مالي ليلي بأبراج مدينة — رسم أصلي لواجهة كيان</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0%" stop-color="#071426"/>
+      <stop offset="48%" stop-color="#0E2A4E"/>
+      <stop offset="78%" stop-color="#164B7D"/>
+      <stop offset="100%" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <linearGradient id="horizon" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#F59E0B" stop-opacity="0.55"/>
+      <stop offset="45%" stop-color="#F59E0B" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.22"/>
+    </linearGradient>
+    <linearGradient id="towerFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0B1B31"/>
+      <stop offset="100%" stop-color="#050C18"/>
+    </linearGradient>
+    <linearGradient id="towerMid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#123255"/>
+      <stop offset="100%" stop-color="#09182B"/>
+    </linearGradient>
+    <linearGradient id="towerBack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1A446B" stop-opacity="0.75"/>
+      <stop offset="100%" stop-color="#0B1E36" stop-opacity="0.25"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.72" cy="0.26" r="0.34">
+      <stop offset="0%" stop-color="#7DD3FC" stop-opacity="0.6"/>
+      <stop offset="55%" stop-color="#38BDF8" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FDE68A" stop-opacity="0.9"/>
+      <stop offset="55%" stop-color="#F59E0B" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#F59E0B" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="windows" width="18" height="22" patternUnits="userSpaceOnUse">
+      <rect width="18" height="22" fill="transparent"/>
+      <rect x="3" y="4" width="5" height="3" rx="0.6" fill="#FCD34D" opacity="0.65"/>
+      <rect x="11" y="12" width="4" height="3" rx="0.6" fill="#93C5FD" opacity="0.38"/>
+    </pattern>
+    <pattern id="windowsSoft" width="24" height="26" patternUnits="userSpaceOnUse">
+      <rect width="24" height="26" fill="transparent"/>
+      <rect x="5" y="5" width="4" height="3" rx="0.5" fill="#FDE68A" opacity="0.35"/>
+      <rect x="15" y="15" width="4" height="3" rx="0.5" fill="#BFDBFE" opacity="0.22"/>
+    </pattern>
+    <linearGradient id="fadeEnd" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.9"/>
+    </linearGradient>
+    <mask id="cityMask">
+      <rect width="1200" height="400" fill="#FFFFFF"/>
+    </mask>
+  </defs>
+
+  <rect width="1200" height="400" fill="url(#sky)"/>
+  <rect width="1200" height="400" fill="url(#glow)"/>
+  <circle cx="890" cy="108" r="150" fill="url(#sun)"/>
+  <circle cx="890" cy="108" r="46" fill="#FEF3C7" opacity="0.85"/>
+  <circle cx="890" cy="108" r="64" fill="none" stroke="#FDE68A" stroke-opacity="0.18" stroke-width="2"/>
+
+  <!-- خط الأفق البعيد -->
+  <path d="M0 268 L70 245 L140 258 L220 232 L300 254 L390 224 L470 250 L560 236 L650 258 L740 228 L830 252 L920 240 L1010 262 L1100 238 L1200 260 L1200 400 L0 400 Z" fill="#0A213C" opacity="0.55"/>
+  <rect x="0" y="258" width="1200" height="4" fill="url(#horizon)"/>
+
+  <!-- أبراج خلفية -->
+  <g fill="url(#towerBack)" mask="url(#cityMask)">
+    <rect x="58" y="176" width="74" height="184" rx="3"/>
+    <rect x="148" y="204" width="58" height="156" rx="3"/>
+    <rect x="248" y="150" width="88" height="210" rx="4"/>
+    <rect x="354" y="192" width="66" height="168" rx="3"/>
+    <rect x="462" y="164" width="72" height="196" rx="3"/>
+    <rect x="566" y="206" width="52" height="154" rx="3"/>
+    <rect x="636" y="138" width="96" height="222" rx="4"/>
+    <rect x="760" y="182" width="70" height="178" rx="3"/>
+    <rect x="858" y="210" width="58" height="150" rx="3"/>
+    <rect x="948" y="158" width="82" height="202" rx="4"/>
+    <rect x="1062" y="196" width="62" height="164" rx="3"/>
+  </g>
+
+  <!-- أبراج أمامية -->
+  <g mask="url(#cityMask)">
+    <g>
+      <rect x="102" y="226" width="96" height="174" rx="4" fill="url(#towerMid)"/>
+      <rect x="102" y="226" width="96" height="174" fill="url(#windows)"/>
+      <rect x="102" y="226" width="96" height="8" fill="#1E3A5F"/>
+    </g>
+    <g>
+      <rect x="226" y="262" width="72" height="138" rx="3" fill="url(#towerFront)"/>
+      <rect x="226" y="262" width="72" height="138" fill="url(#windowsSoft)"/>
+    </g>
+    <g>
+      <path d="M330 400 L330 190 L374 164 L418 190 L418 400 Z" fill="url(#towerFront)"/>
+      <path d="M330 400 L330 190 L374 164 L418 190 L418 400 Z" fill="url(#windowsSoft)"/>
+      <path d="M374 164 L374 140" stroke="#93C5FD" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="374" cy="137" r="3" fill="#FCA5A5"/>
+    </g>
+    <g>
+      <rect x="438" y="236" width="84" height="164" rx="4" fill="url(#towerMid)"/>
+      <rect x="438" y="236" width="84" height="164" fill="url(#windows)"/>
+      <rect x="476" y="208" width="8" height="28" fill="#123255"/>
+      <circle cx="480" cy="205" r="3" fill="#FCA5A5"/>
+    </g>
+    <g>
+      <rect x="546" y="276" width="64" height="124" rx="3" fill="url(#towerFront)"/>
+      <rect x="546" y="276" width="64" height="124" fill="url(#windowsSoft)"/>
+    </g>
+    <g>
+      <path d="M642 400 L642 214 L700 178 L758 214 L758 400 Z" fill="url(#towerMid)"/>
+      <path d="M642 400 L642 214 L700 178 L758 214 L758 400 Z" fill="url(#windows)"/>
+      <path d="M700 178 L700 148" stroke="#93C5FD" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <g>
+      <rect x="784" y="250" width="92" height="150" rx="4" fill="url(#towerFront)"/>
+      <rect x="784" y="250" width="92" height="150" fill="url(#windowsSoft)"/>
+      <rect x="784" y="250" width="92" height="7" fill="#1E3A5F"/>
+    </g>
+    <g>
+      <rect x="896" y="228" width="72" height="172" rx="4" fill="url(#towerMid)"/>
+      <rect x="896" y="228" width="72" height="172" fill="url(#windows)"/>
+    </g>
+    <g>
+      <rect x="986" y="284" width="58" height="116" rx="3" fill="url(#towerFront)"/>
+      <rect x="986" y="284" width="58" height="116" fill="url(#windowsSoft)"/>
+    </g>
+    <g>
+      <path d="M1064 400 L1064 238 L1114 210 L1164 238 L1164 400 Z" fill="url(#towerMid)"/>
+      <path d="M1064 400 L1064 238 L1114 210 L1164 238 L1164 400 Z" fill="url(#windowsSoft)"/>
+      <path d="M1114 210 L1114 188" stroke="#93C5FD" stroke-width="2" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- انعكاس ضوئي سفلي -->
+  <rect x="0" y="360" width="1200" height="40" fill="#0B1E36" opacity="0.55"/>
+  <path d="M0 376 C150 356 280 372 420 360 C570 348 690 366 840 356 C980 347 1090 362 1200 352 L1200 400 L0 400 Z" fill="#071426" opacity="0.75"/>
+
+  <!-- شبكة خفيفة تعطي إحساس لوحة البيانات -->
+  <g stroke="#93C5FD" stroke-opacity="0.06">
+    <path d="M0 100 H1200 M0 160 H1200 M0 220 H1200 M0 280 H1200"/>
+    <path d="M120 0 V400 M260 0 V400 M400 0 V400 M540 0 V400 M680 0 V400 M820 0 V400 M960 0 V400 M1100 0 V400"/>
+  </g>
+</svg>

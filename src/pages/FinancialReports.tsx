@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useCompanyProfile } from '../context/CompanyProfileContext';
+import { ReportHeader } from '../components/company/ReportHeader';
 import {
   BarChart3,
   Scale,
@@ -37,6 +39,8 @@ interface ReportFilter {
 }
 
 export const FinancialReportsPage: React.FC = () => {
+  // PHASE 10.0 — company identity from the single central source
+  const { company } = useCompanyProfile();
   const [activeTab, setActiveTab] = useState<
     'pnl' | 'balance_sheet' | 'cash_flow' | 'trial_balance' | 'general_ledger' | 'account_statement' | 'reconciliation' | 'ratios'
   >('pnl');
@@ -166,6 +170,10 @@ export const FinancialReportsPage: React.FC = () => {
     <div className="space-y-6 select-text">
       {/* Top Header & Executive Controls */}
       <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+      {/* PHASE 10.0 — print-only shared identity header (screen layout untouched) */}
+      <div className="hidden print:block">
+        <ReportHeader company={company} title="القوائم المالية (Financial Reports)" compact />
+      </div>
         <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
           <div>

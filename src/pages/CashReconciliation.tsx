@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useCompanyProfile } from '../context/CompanyProfileContext';
+import { ReportHeader } from '../components/company/ReportHeader';
 import {
   Wallet,
   Plus,
@@ -61,6 +63,8 @@ const DEFAULT_DENOMINATIONS: DenominationRow[] = [
 ];
 
 export const CashReconciliationPage: React.FC = () => {
+  // PHASE 10.0 — company identity from the single central source
+  const { company } = useCompanyProfile();
   const [counts, setCounts] = useState<CashCountItem[]>([]);
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -192,6 +196,10 @@ export const CashReconciliationPage: React.FC = () => {
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+        {/* PHASE 10.0 — print-only shared identity header (screen layout untouched) */}
+        <div className="hidden print:block">
+          <ReportHeader company={company} title="تسوية النقدية (Cash Reconciliation)" compact />
+        </div>
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
         <div className="flex items-center gap-3">

@@ -18,3 +18,16 @@ View your app in AI Studio: https://ai.studio/apps/19024da2-60cc-43ca-8308-9437d
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Session secret (production)
+
+Session tokens are HMAC-signed with `KAYAN_SESSION_SECRET` (minimum 16 characters),
+read from the process environment (see [.env.example](.env.example)).
+
+- **Production** (`NODE_ENV=production`): the secret is **mandatory** — the server
+  refuses to start without it and never falls back to a throwaway value. Set a long
+  random value and keep it out of Git; the value is never logged or printed.
+- **Development**: if unset, an ephemeral per-process secret is used; sessions then
+  end whenever the server restarts (the current default).
+- **Rotating the secret invalidates every existing session token** — all users must
+  log in again. Do not rotate casually.

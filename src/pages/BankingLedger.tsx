@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useCompanyProfile } from '../context/CompanyProfileContext';
+import { ReportHeader } from '../components/company/ReportHeader';
 import {
   FileText,
   Search,
@@ -40,6 +42,8 @@ interface TransactionItem {
 }
 
 export const BankingLedgerPage: React.FC = () => {
+  // PHASE 10.0 — company identity from the single central source
+  const { company } = useCompanyProfile();
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
   const [cashAccounts, setCashAccounts] = useState<any[]>([]);
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
@@ -178,6 +182,10 @@ export const BankingLedgerPage: React.FC = () => {
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+        {/* PHASE 10.0 — print-only shared identity header (screen layout untouched) */}
+        <div className="hidden print:block">
+          <ReportHeader company={company} title="سجل حركات البنك (Banking Ledger)" compact />
+        </div>
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
         <div className="flex items-center gap-3">

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useCompanyProfile } from '../context/CompanyProfileContext';
+import { ReportHeader } from '../components/company/ReportHeader';
 import { useLookup } from '../context/LookupContext';
 import { 
   FileText, 
@@ -16,6 +18,8 @@ import {
 } from 'lucide-react';
 
 export const CustomerStatementPage: React.FC = () => {
+  // PHASE 10.0 — company identity from the single central source
+  const { company } = useCompanyProfile();
   const { openLookup } = useLookup();
   const [customers, setCustomers] = useState<any[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
@@ -216,26 +220,21 @@ export const CustomerStatementPage: React.FC = () => {
 
       {/* Printable Statement Sheet */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 print:border-none print:shadow-none print:p-0">
-        {/* Statement Header */}
-        <div className="border-b border-slate-200 pb-5 mb-5 flex flex-col sm:flex-row justify-between items-start gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xl font-black text-slate-900 tracking-tight">KAYAN</span>
-              <span className="text-xs font-bold text-slate-400 uppercase">Accounting ERP</span>
-            </div>
-            <h2 className="text-lg font-black text-slate-800 mt-2">كشف حساب عميل مفصل (Detailed Customer Statement)</h2>
-            <p className="text-xs text-slate-500 mt-0.5">الفترة: من بداية التعامل وحتى تاريخ اليوم {new Date().toLocaleDateString('ar-YE')}</p>
+        {/* Statement Header — PHASE 10.0 shared identity header */}
+        <ReportHeader
+          company={company}
+          title="كشف حساب عميل مفصل (Detailed Customer Statement)"
+          subtitle={`الفترة: من بداية التعامل وحتى تاريخ اليوم ${new Date().toLocaleDateString('ar-YE')}`}
+          compact
+        />
+        {statement?.customer && (
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs space-y-1 mb-5 max-w-[320px]">
+            <div className="font-bold text-sm text-slate-900">{statement.customer.name}</div>
+            <div className="text-slate-500 font-mono">كود العميل: {statement.customer.code}</div>
+            <div className="text-slate-500 font-mono">الرقم الضريبي: {statement.customer.tax_number || '—'}</div>
+            <div className="text-slate-500">حساب المراقبة: 1103 (ذمم العملاء المدينة)</div>
           </div>
-
-          {statement?.customer && (
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs space-y-1 min-w-[240px]">
-              <div className="font-bold text-sm text-slate-900">{statement.customer.name}</div>
-              <div className="text-slate-500 font-mono">كود العميل: {statement.customer.code}</div>
-              <div className="text-slate-500 font-mono">الرقم الضريبي: {statement.customer.tax_number || '—'}</div>
-              <div className="text-slate-500">حساب المراقبة: 1103 (ذمم العملاء المدينة)</div>
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Transactions Table */}
         <div className="overflow-x-auto">

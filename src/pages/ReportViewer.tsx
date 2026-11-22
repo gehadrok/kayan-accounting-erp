@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useCompanyProfile } from '../context/CompanyProfileContext';
+import { ReportHeader } from '../components/company/ReportHeader';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   ArrowRight, 
@@ -22,12 +24,224 @@ import {
   Warehouse,
   AlertCircle
 } from 'lucide-react';
-import { REPORT_REGISTRY, ReportDefinition } from '../services/reportRegistry';
+import { REPORT_REGISTRY, ReportDefinition, formatCurrency, formatAmountOnly, formatReportValue } from '../services/reportRegistry';
 import { ReportExportService } from '../services/reportExportService';
 import { useNavigation } from '../context/NavigationContext';
 import { useLookup } from '../context/LookupContext';
+import { useSettings } from '../context/SettingsContext';
+
+/**
+ * PHASE 10.5.3 — report data sources may sit behind permission-guarded
+ * endpoints (e.g. the audit-trail report). Attach the stored session token
+ * when one exists; open endpoints ignore the header.
+ */
+function sessionAuthHeaders(): Record<string, string> {
+  try {
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('kayan_session_token') : null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
+/* ===========================================================================
+   Report payload adapters
+   ===========================================================================
+   Registry rows are flat: one row object per table row. Several reports,
+   however, return a single NESTED object (income-statement/balance-sheet/
+   cash-flow) or an object whose row array sits under a report-specific key
+   (general-ledger -> lines, purchase-summary -> invoices, ar-aging ->
+   customers, ap-aging -> suppliers). Without these adapters the viewer fell
+   through to `rows = [resData]` — a single row of the whole object — which is
+   why those screens showed one meaningless row (or none).
+
+   Returns null when the payload is not this report's shape, so the caller can
+   fall back to generic normalization.
+   ========================================================================= */
+
+type Flattener = (payload: any) => any[] | null;
+
+const num = (v: any) => Number(v ?? 0);
+const pct = (v: any) => `${(num(v) || 0).toFixed(2)}%`;
+// PHASE 10.5.1 — was hardcoded `… YER` with en-US/2dp: reports.currency_symbol
+// and reports.decimal_places were saved but never read. formatCurrency reads
+// the synced preferences (reportRegistry.reportFormatPrefs).
+const money = (v: any) => formatCurrency(num(v));
+
+const SECTION_LABELS: Record<string, Record<string, string>> = {
+  'income-statement': {
+    revenues: 'الإيرادات',
+    cogs: 'تكلفة البضاعة المباعة',
+    operatingExpenses: 'المصروفات التشغيلية',
+    otherIncomes: 'إيرادات أخرى',
+    otherExpenses: 'مصروفات أخرى',
+  },
+  'balance-sheet': {
+    currentAssets: 'الأصول المتداولة',
+    nonCurrentAssets: 'الأصول غير المتداولة',
+    currentLiabilities: 'الالتزامات المتداولة',
+    nonCurrentLiabilities: 'الالتزامات غير المتداولة',
+    equity: 'حقوق الملكية',
+  },
+};
+
+const SECTION_TOTAL_KEYS: Record<string, Record<string, string>> = {
+  'income-statement': {
+    revenues: 'totalRevenue',
+    cogs: 'totalCogs',
+    operatingExpenses: 'totalOperatingExpenses',
+    otherIncomes: 'totalOtherIncome',
+    otherExpenses: 'totalOtherExpenses',
+  },
+  'balance-sheet': {
+    currentAssets: 'totalCurrentAssets',
+    nonCurrentAssets: 'totalNonCurrentAssets',
+    currentLiabilities: 'totalCurrentLiabilities',
+    nonCurrentLiabilities: 'totalNonCurrentLiabilities',
+    equity: 'totalEquity',
+  },
+};
+
+function flattenSections(reportId: string, payload: any): any[] | null {
+  const labels = SECTION_LABELS[reportId];
+  const totals = SECTION_TOTAL_KEYS[reportId];
+  if (!labels || !payload || typeof payload !== 'object' || !payload.sections) return null;
+
+  const rows: any[] = [];
+  for (const [key, label] of Object.entries(labels)) {
+    const section = payload.sections[key];
+    if (!Array.isArray(section) || section.length === 0) continue;
+    for (const r of section) {
+      rows.push({
+        section: label,
+        accountCode: r.accountCode ?? '',
+        accountName: r.accountName ?? '',
+        amount: num(r.amount),
+      });
+    }
+    const sum = totals?.[key];
+    const total = sum !== undefined && payload[sum] !== undefined
+      ? num(payload[sum])
+      : section.reduce((s: number, r: any) => s + num(r.amount), 0);
+    rows.push({ section: label, accountCode: '', accountName: `إجمالي ${label}`, amount: total });
+  }
+
+  if (reportId === 'balance-sheet') {
+    rows.push(
+      { section: 'الخلاصة', accountCode: '', accountName: 'إجمالي الأصول', amount: num(payload.totalAssets) },
+      { section: 'الخلاصة', accountCode: '', accountName: 'إجمالي الالتزامات', amount: num(payload.totalLiabilities) },
+      { section: 'الخلاصة', accountCode: '', accountName: 'إجمالي حقوق الملكية', amount: num(payload.totalEquity) },
+      { section: 'الخلاصة', accountCode: '', accountName: 'إجمالي الالتزامات وحقوق الملكية', amount: num(payload.totalLiabilitiesAndEquity) },
+    );
+  } else {
+    rows.push(
+      { section: 'الخلاصة', accountCode: '', accountName: 'مجمل الربح', amount: num(payload.grossProfit) },
+      { section: 'الخلاصة', accountCode: '', accountName: 'الربح التشغيلي', amount: num(payload.operatingProfit) },
+      { section: 'الخلاصة', accountCode: '', accountName: 'صافي الربح', amount: num(payload.netProfit) },
+    );
+  }
+
+  return rows;
+}
+
+const CASH_FLOW_GROUPS = [
+  {
+    key: 'operatingActivities',
+    label: 'أنشطة تشغيلية',
+    lines: [
+      ['netProfit', 'صافي الربح'],
+      ['depreciationExpense', 'الاستهلاك والإهلاك'],
+      ['gainOnDisposal', 'أرباح التصرف في الأصول'],
+      ['lossOnDisposal', 'خسائر التصرف في الأصول'],
+      ['arChange', 'التغير في الذمم المدينة'],
+      ['invChange', 'التغير في المخزون'],
+      ['prepaidChange', 'التغير في المصروفات المدفوعة مقدماً'],
+      ['apChange', 'التغير في الذمم الدائنة'],
+      ['accrualsChange', 'التغير في المستحقات'],
+      ['taxChange', 'التغير في الضرائب'],
+      ['totalOperating', 'صافي التدفق التشغيلي'],
+    ] as [string, string][],
+  },
+  {
+    key: 'investingActivities',
+    label: 'أنشطة استثمارية',
+    lines: [
+      ['capitalExpenditures', 'النفقات الرأسمالية'],
+      ['totalInvesting', 'صافي التدفق الاستثماري'],
+    ] as [string, string][],
+  },
+  {
+    key: 'financingActivities',
+    label: 'أنشطة تمويلية',
+    lines: [
+      ['capitalContributions', 'المساهمات الرأسمالية'],
+      ['totalFinancing', 'صافي التدفق التمويلي'],
+    ] as [string, string][],
+  },
+];
+
+const FLATTENERS: Record<string, Flattener> = {
+  // /api/reports/trial-balance returns a flat account array — derive the net
+  // movement column this report's registry promises but the payload lacks.
+  'account-activity': (p) =>
+    Array.isArray(p)
+      ? p.map((r: any) => ({
+          ...r,
+          netMovement: num(r.totalDebit) - num(r.totalCredit),
+        }))
+      : null,
+
+  'income-statement': (p) => flattenSections('income-statement', p),
+  'balance-sheet': (p) => flattenSections('balance-sheet', p),
+
+  'cash-flow': (p) => {
+    if (!p || typeof p !== 'object' || !p.operatingActivities) return null;
+    const rows: any[] = [];
+    for (const g of CASH_FLOW_GROUPS) {
+      const group = p[g.key];
+      if (!group) continue;
+      for (const [field, label] of g.lines) {
+        if (group[field] === undefined) continue;
+        rows.push({ group: g.label, activity: label, value: num(group[field]) });
+      }
+    }
+    rows.push(
+      { group: 'ملخص النقدي', activity: 'صافي التغير في النقدية', value: num(p.netCashChange) },
+      { group: 'ملخص النقدي', activity: 'النقدية في بداية الفترة', value: num(p.openingCash) },
+      { group: 'ملخص النقدي', activity: 'النقدية الفعلية في نهاية الفترة', value: num(p.actualClosingCash) },
+    );
+    return rows;
+  },
+
+  'profitability-analysis': (p) => {
+    if (!p || typeof p !== 'object' || p.totalRevenue === undefined) return null;
+    return [
+      { metric: 'إجمالي الإيرادات', value: money(p.totalRevenue) },
+      { metric: 'تكلفة البضاعة المباعة', value: money(p.totalCogs) },
+      { metric: 'مجمل الربح', value: money(p.grossProfit) },
+      { metric: 'هامش مجمل الربح', value: pct(p.grossMargin) },
+      { metric: 'المصروفات التشغيلية', value: money(p.totalOperatingExpenses) },
+      { metric: 'الربح التشغيلي', value: money(p.operatingProfit) },
+      { metric: 'الإيرادات الأخرى', value: money(p.totalOtherIncome) },
+      { metric: 'المصروفات الأخرى', value: money(p.totalOtherExpenses) },
+      { metric: 'صافي الربح', value: money(p.netProfit) },
+      { metric: 'هامش صافي الربح', value: pct(p.netMargin) },
+    ];
+  },
+};
+
+/** Object payloads whose row array lives under a report-specific key. */
+const CONTAINER_KEYS = ['data', 'entries', 'items', 'rows', 'lines', 'invoices', 'customers', 'suppliers'];
 
 export const ReportViewer: React.FC = () => {
+  // PHASE 10.0 ? company identity from the single central source
+  const { company } = useCompanyProfile();
+  // PHASE 10.5.1 — subscribing to the settings context so a currency/format
+  // change re-renders this screen (the actual formatting reads the synced
+  // reportFormatPrefs singleton).
+  const { getValue } = useSettings();
+  const currencySymbol = String(getValue('reports.currency_symbol', 'YER'));
+  const currencyPosition = String(getValue('reports.currency_position', 'after')) === 'before' ? 'before' : 'after';
   const { currentRoute, navigateTo } = useNavigation();
   const { openLookup } = useLookup();
   const reportId = currentRoute.split('/reports/view/')[1] || '';
@@ -178,8 +392,13 @@ export const ReportViewer: React.FC = () => {
       if (supplierId) params.append('supplierId', supplierId);
       if (warehouseId) params.append('warehouseId', warehouseId);
 
-      const url = `${reportDef.dataSourceUrl}${params.toString() ? '?' + params.toString() : ''}`;
-      const res = await fetch(url);
+      // dataSourceUrl may already carry a query (e.g. ?limit=500) — join with
+      // '&' in that case, otherwise the URL gets a second '?' and the API
+      // ignores every filter the user picked.
+      const qs = params.toString();
+      const sep = reportDef.dataSourceUrl.includes('?') ? '&' : '?';
+      const url = `${reportDef.dataSourceUrl}${qs ? sep + qs : ''}`;
+      const res = await fetch(url, { headers: sessionAuthHeaders() });
       const resData = await res.json();
       if (!res.ok) throw new Error(resData.error || 'فشل تشغيل التقرير');
 
@@ -201,18 +420,18 @@ export const ReportViewer: React.FC = () => {
         setStatementSummary(null);
       }
 
-      // Normalize array data
+      // Normalize into flat rows
       let rows: any[] = [];
-      if (Array.isArray(resData)) {
+      // 1. Report-specific adapter (nested statements, derived ratios, ...)
+      const adapted = FLATTENERS[reportDef.id]?.(resData) ?? null;
+      if (adapted) {
+        rows = adapted;
+      } else if (Array.isArray(resData)) {
         rows = resData;
       } else if (resData && typeof resData === 'object') {
-        if (Array.isArray(resData.data)) rows = resData.data;
-        else if (Array.isArray(resData.entries)) rows = resData.entries;
-        else if (Array.isArray(resData.items)) rows = resData.items;
-        else if (Array.isArray(resData.rows)) rows = resData.rows;
-        else {
-          rows = [resData];
-        }
+        // 2. First array-valued container key wins
+        const container = CONTAINER_KEYS.find((k) => Array.isArray(resData[k]));
+        rows = container ? resData[container] : [resData];
       }
       setData(rows);
     } catch (err: any) {
@@ -252,10 +471,29 @@ export const ReportViewer: React.FC = () => {
   const requiresAccount = reportDef.filters.includes('account');
   const requiresWarehouse = reportDef.filters.includes('warehouse');
 
+  // PHASE 10.5.1 — banner money cell honoring the saved symbol + position
+  // (the four cards below hardcoded "YER" after the number).
+  const cardMoney = (v: any, symCls: string) => {
+    const amount = formatAmountOnly(v);
+    const sym = <span className={`text-[10px] ${symCls}`}>{currencySymbol}</span>;
+    return currencyPosition === 'before' ? <>{sym} {amount}</> : <>{amount} {sym}</>;
+  };
+
   return (
     <div className="space-y-5 pb-12" dir="rtl">
-      {/* 1. Professional Action Toolbar */}
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-20">
+      {/* Print-only letterhead: the interactive chrome below is print:hidden,
+          so printing this page emits the company header + table only. */}
+      <div className="hidden print:block">
+        <ReportHeader
+          company={company}
+          title={reportDef.name}
+          subtitle={`من ${fromDate} إلى ${toDate}${selectedAccount ? ` • حساب: ${selectedAccount.code}` : ''}`}
+          compact
+        />
+      </div>
+
+      {/* 1. Professional Action Toolbar (print:hidden — buttons/zoom never print) */}
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-20 print:hidden">
         <div className="flex items-center gap-3">
           <button 
             onClick={() => navigateTo('/reports')}
@@ -295,7 +533,7 @@ export const ReportViewer: React.FC = () => {
           </button>
 
           <button 
-            onClick={() => ReportExportService.printReport(reportDef, filteredData)}
+            onClick={() => ReportExportService.printReport(reportDef, filteredData, {}, company)}
             className="px-3 py-2 bg-blue-900 hover:bg-blue-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
           >
             <Printer size={15} />
@@ -303,7 +541,7 @@ export const ReportViewer: React.FC = () => {
           </button>
 
           <button 
-            onClick={() => ReportExportService.exportToPdf(reportDef, filteredData)}
+            onClick={() => ReportExportService.exportToPdf(reportDef, filteredData, {}, company)}
             className="px-3 py-2 bg-rose-700 hover:bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
           >
             <FileText size={15} />
@@ -328,8 +566,8 @@ export const ReportViewer: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Professional Filters Bar */}
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+      {/* 2. Professional Filters Bar (print:hidden) */}
+      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4 print:hidden">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Customer Parameter Box with F9 Lookup */}
           {requiresCustomer && (
@@ -540,32 +778,32 @@ export const ReportViewer: React.FC = () => {
           <div className="bg-white/10 backdrop-blur-xs p-3 rounded-xl border border-white/10">
             <div className="text-[11px] text-blue-200 font-medium">الرصيد الافتتاحي</div>
             <div className="text-base font-black font-mono mt-1 text-white">
-              {Number(statementSummary.openingBalance).toLocaleString('en-US', { minimumFractionDigits: 2 })} <span className="text-[10px] text-blue-200">YER</span>
+              {cardMoney(statementSummary.openingBalance, 'text-blue-200')}
             </div>
           </div>
           <div className="bg-white/10 backdrop-blur-xs p-3 rounded-xl border border-white/10">
             <div className="text-[11px] text-emerald-200 font-medium">إجمالي المدين (مشتريات/فواتير)</div>
             <div className="text-base font-black font-mono mt-1 text-emerald-300">
-              {Number(statementSummary.totalDebit).toLocaleString('en-US', { minimumFractionDigits: 2 })} <span className="text-[10px] text-emerald-200">YER</span>
+              {cardMoney(statementSummary.totalDebit, 'text-emerald-200')}
             </div>
           </div>
           <div className="bg-white/10 backdrop-blur-xs p-3 rounded-xl border border-white/10">
             <div className="text-[11px] text-amber-200 font-medium">إجمالي الدائن (سدادات/مردودات)</div>
             <div className="text-base font-black font-mono mt-1 text-amber-300">
-              {Number(statementSummary.totalCredit).toLocaleString('en-US', { minimumFractionDigits: 2 })} <span className="text-[10px] text-amber-200">YER</span>
+              {cardMoney(statementSummary.totalCredit, 'text-amber-200')}
             </div>
           </div>
           <div className="bg-white/15 backdrop-blur-xs p-3 rounded-xl border border-white/20">
             <div className="text-[11px] text-white font-bold">الرصيد الختامي المستحق</div>
             <div className="text-lg font-black font-mono mt-1 text-blue-300">
-              {Number(statementSummary.closingBalance).toLocaleString('en-US', { minimumFractionDigits: 2 })} <span className="text-[10px] text-blue-200">YER</span>
+              {cardMoney(statementSummary.closingBalance, 'text-white')}
             </div>
           </div>
         </div>
       )}
 
-      {/* 3. Search Data Bar */}
-      <div className="bg-white px-4 py-3 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between gap-4">
+      {/* 3. Search Data Bar (print:hidden) */}
+      <div className="bg-white px-4 py-3 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between gap-4 print:hidden">
         <div className="relative w-full max-w-md">
           <Search className="absolute right-3 top-2.5 text-slate-400" size={16} />
           <input 
@@ -612,10 +850,10 @@ export const ReportViewer: React.FC = () => {
                   <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
                     {reportDef.columns.map(c => {
                       const val = row[c.key];
-                      let formatted = val !== undefined && val !== null ? String(val) : '-';
-                      if (c.format === 'currency' && typeof val === 'number') {
-                        formatted = val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' YER';
-                      }
+                      // PHASE 10.5.1 — was String(val) + hardcoded "YER"/2dp:
+                      // now honors currency symbol/position/decimals, thousands
+                      // & decimal separators and the report date format.
+                      let formatted = val !== undefined && val !== null ? formatReportValue(val, c.format) : '-';
                       return (
                         <td key={c.key} className="py-2.5 px-4 font-medium">
                           {formatted}
@@ -672,18 +910,13 @@ export const ReportViewer: React.FC = () => {
               {/* Virtual A4 Paper Container */}
               <div className="bg-white shadow-2xl rounded-lg p-8 w-full max-w-2xl text-slate-900 border border-slate-200 min-h-[500px] flex flex-col justify-between">
                 <div>
-                  <div className="flex justify-between items-center border-b-2 border-blue-900 pb-3 mb-4">
-                    <div>
-                      <h2 className="font-bold text-blue-900 text-base">شركة كيان للتجارة والتوزيع</h2>
-                      <p className="text-[10px] text-slate-500">نظام كيان المحاسبي ERP</p>
-                    </div>
-                    <div className="text-left text-[10px] text-slate-500">
-                      <div>التاريخ: {new Date().toLocaleDateString('ar-YE')}</div>
-                    </div>
-                  </div>
-
-                  <h3 className="text-center font-bold text-sm mb-1">{reportDef.name}</h3>
-                  <p className="text-center text-[10px] text-slate-500 mb-4">{reportDef.description}</p>
+{/* PHASE 10.0 — shared bilingual identity header */}
+                  <ReportHeader
+                    company={company}
+                    title={reportDef.name}
+                    subtitle={reportDef.description}
+                    compact
+                  />
 
                   <table className="w-full text-right border-collapse text-[10px]">
                     <thead>
@@ -693,15 +926,20 @@ export const ReportViewer: React.FC = () => {
                         ))}
                       </tr>
                     </thead>
-                    <tbody>
-                      {filteredData.slice(0, 8).map((row, i) => (
-                        <tr key={i} className="border-b">
-                          {reportDef.columns.map(c => (
-                            <td key={c.key} className="py-1.5 px-2 border">{row[c.key] !== undefined ? row[c.key] : ''}</td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
+                      <tbody>
+                        {filteredData.slice(0, 8).map((row, i) => (
+                          <tr key={i} className="border-b">
+                            {reportDef.columns.map(c => {
+                              const val = row[c.key];
+                              // Same formatting path as the screen (print preview must match).
+                              let formatted = val !== undefined && val !== null ? formatReportValue(val, c.format) : '';
+                              return (
+                                <td key={c.key} className="py-1.5 px-2 border">{formatted}</td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
                   </table>
                   {filteredData.length > 8 && (
                     <div className="text-center text-[10px] text-slate-500 mt-2">
@@ -725,7 +963,7 @@ export const ReportViewer: React.FC = () => {
               <button 
                 onClick={() => {
                   setShowPrintModal(false);
-                  ReportExportService.printReport(reportDef, filteredData);
+                  ReportExportService.printReport(reportDef, filteredData, {}, company);
                 }} 
                 className="px-4 py-2 bg-blue-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md"
               >

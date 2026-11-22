@@ -13,17 +13,32 @@ export const AuditLogsPage: React.FC = () => {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchLogs = async () => {
       try {
         setLoading(true);
-        const res = await fetch('/api/audit-logs?limit=100');
+        setLoadError(null);
+        // PHASE 10.5.3 — the audit trail is permission-guarded (system.audit.view
+        // أو reports.audit.view); attach the stored session token like every
+        // other guarded read, and surface the server's message on failure
+        // instead of silently showing an empty table.
+        let headers: Record<string, string> = {};
+        try {
+          const token = typeof localStorage !== 'undefined' ? localStorage.getItem('kayan_session_token') : null;
+          if (token) headers = { Authorization: `Bearer ${token}` };
+        } catch { /* storage unavailable */ }
+        const res = await fetch('/api/audit-logs?limit=100', { headers });
         if (res.ok) {
           setLogs(await res.json());
+        } else {
+          const data = await res.json().catch(() => null);
+          setLoadError((data && data.error) || `تعذر تحميل سجل التدقيق (${res.status})`);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error fetching audit logs:', err);
+        setLoadError(err?.message || 'تعذر تحميل سجل التدقيق');
       } finally {
         setLoading(false);
       }
@@ -87,6 +102,12 @@ export const AuditLogsPage: React.FC = () => {
                 <tr>
                   <td colSpan={5} className="py-8 text-center text-slate-400">
                     جاري استدعاء سجل التدقيق...
+                  </td>
+                </tr>
+              ) : loadError ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-rose-600 font-bold">
+                    {loadError} — سجّل الدخول بحساب يملك صلاحية عرض السجل ثم أعد تحميل الصفحة.
                   </td>
                 </tr>
               ) : filteredLogs.length === 0 ? (

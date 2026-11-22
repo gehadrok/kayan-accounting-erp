@@ -1,5 +1,26 @@
 import { getDb } from './db.ts';
 
+/**
+ * PHASE 10.3 — THE IN-LEDGER CONTRACT (applies to every report in this file)
+ * ------------------------------------------------------------------------
+ * This ledger voids a posting by ADDING a compensating entry with the legs
+ * swapped and marking the original REVERSED; it never edits or deletes a
+ * posted entry. Both members of the pair carry `reversed_entry_id`.
+ *
+ *     an entry belongs to the posted ledger  <=>  status IN ('POSTED','REVERSED')
+ *
+ *   DRAFT     never posted, so it has no ledger effect              -> excluded
+ *   POSTED    in the ledger                                         -> included
+ *   REVERSED  original of a pair whose cancellation is a separate
+ *             POSTED entry. Counting ONLY the cancellation leaves a
+ *             phantom of the whole reversed amount in every report;
+ *             counting BOTH nets the pair to a genuine no-op          -> included
+ *
+ * Every aggregation below therefore filters `IN ('POSTED','REVERSED')`.
+ * Filtering on 'POSTED' alone is what made a reversed entry appear as a
+ * spurious debit/credit of its full amount.
+ */
+
 export interface ReportFilterDto {
   companyId?: string;
   branchId?: string;
@@ -46,7 +67,7 @@ export class ReportingService {
     const db = await getDb();
     const { fromDate, toDate } = await this.resolveDateRange(filters);
 
-    let whereClause = "WHERE je.status = 'POSTED'";
+    let whereClause = "WHERE je.status IN ('POSTED', 'REVERSED')";
     const params: any[] = [];
     let pIdx = 1;
 
@@ -75,7 +96,7 @@ export class ReportingService {
     let openingDebit = 0;
     let openingCredit = 0;
     if (fromDate) {
-      let openWhere = "WHERE je.status = 'POSTED' AND je.entry_date < $1";
+      let openWhere = "WHERE je.status IN ('POSTED', 'REVERSED') AND je.entry_date < $1";
       const openParams: any[] = [fromDate];
       let oIdx = 2;
 
@@ -258,7 +279,7 @@ export class ReportingService {
           COALESCE(SUM(jel.credit), 0) as open_credit
         FROM accounting.journal_entry_lines jel
         JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
-        WHERE je.status = 'POSTED' ${whereBranch} ${openDateCond}
+        WHERE je.status IN ('POSTED', 'REVERSED') ${whereBranch} ${openDateCond}
         GROUP BY jel.account_id
       ),
       period_movements AS (
@@ -268,7 +289,7 @@ export class ReportingService {
           COALESCE(SUM(jel.credit), 0) as period_credit
         FROM accounting.journal_entry_lines jel
         JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
-        WHERE je.status = 'POSTED' ${whereBranch} ${dateCond}
+        WHERE je.status IN ('POSTED', 'REVERSED') ${whereBranch} ${dateCond}
         GROUP BY jel.account_id
       )
       SELECT 
@@ -368,7 +389,7 @@ export class ReportingService {
     const db = await getDb();
     const { fromDate, toDate } = await this.resolveDateRange(filters);
 
-    let whereClause = "WHERE je.status = 'POSTED' AND at.category IN ('REVENUE', 'EXPENSE')";
+    let whereClause = "WHERE je.status IN ('POSTED', 'REVERSED') AND at.category IN ('REVENUE', 'EXPENSE')";
     const params: any[] = [];
     let pIdx = 1;
 
@@ -435,11 +456,11 @@ export class ReportingService {
         }
       } else if (row.category === 'EXPENSE') {
         const net = dr - cr; // Expense normal balance is Debit
-        if (row.accountCode.startsWith('5101') || row.accountCode.startsWith('5102') || row.accountName.includes('تكلفة البضاعة المباعة')) {
+        if (row.accountCode.startsWith("5001") || row.accountCode.startsWith("5101") || row.accountCode.startsWith("5102")) {
           cogs.push({ ...row, amount: net });
           totalCogs += net;
         } else if (
-          row.accountCode.startsWith('5302') || // Bank charges / fees
+          row.accountCode.startsWith("5302") || // Bank charges / fees
           row.accountCode.startsWith('5309') || // Loss on disposal
           row.accountCode.startsWith('5303')    // Deficit on cash count
         ) {
@@ -489,7 +510,7 @@ export class ReportingService {
     const db = await getDb();
     const { toDate } = await this.resolveDateRange(filters);
 
-    let whereClause = "WHERE je.status = 'POSTED'";
+    let whereClause = "WHERE je.status IN ('POSTED', 'REVERSED')";
     const params: any[] = [];
     let pIdx = 1;
 
@@ -626,7 +647,7 @@ export class ReportingService {
         FROM accounting.journal_entry_lines jel
         JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
         JOIN accounting.accounts a ON a.id = jel.account_id
-        WHERE je.status = 'POSTED' AND je.entry_date < $1 AND a.code IN (${placeholders})
+        WHERE je.status IN ('POSTED', 'REVERSED') AND je.entry_date < $1 AND a.code IN (${placeholders})
       `, [fromDate, ...codes]);
 
       const closeRes = await db.query<any>(`
@@ -634,7 +655,7 @@ export class ReportingService {
         FROM accounting.journal_entry_lines jel
         JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
         JOIN accounting.accounts a ON a.id = jel.account_id
-        WHERE je.status = 'POSTED' AND je.entry_date <= $1 AND a.code IN (${placeholders})
+        WHERE je.status IN ('POSTED', 'REVERSED') AND je.entry_date <= $1 AND a.code IN (${placeholders})
       `, [toDate, ...codes]);
 
       const openVal = parseFloat(openRes.rows[0]?.val || '0');
@@ -694,7 +715,7 @@ export class ReportingService {
         FROM accounting.journal_entry_lines jel
         JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
         JOIN accounting.accounts a ON a.id = jel.account_id
-        WHERE je.status = 'POSTED' AND a.code IN ('1101', '1102') ${dateCondition}
+        WHERE je.status IN ('POSTED', 'REVERSED') AND a.code IN ('1101', '1102') ${dateCondition}
       `;
       const res = await db.query<any>(q, dateParam ? [dateParam] : []);
       return parseFloat(res.rows[0]?.balance || '0');
@@ -824,7 +845,7 @@ export class ReportingService {
       FROM accounting.journal_entry_lines jel
       JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
       JOIN accounting.accounts a ON a.id = jel.account_id
-      WHERE a.code = '1103' AND je.status = 'POSTED' AND je.entry_date <= $1
+      WHERE a.code = '1103' AND je.status IN ('POSTED', 'REVERSED') AND je.entry_date <= $1
     `, [dateLimit]);
 
     const glBalance = parseFloat(glRes.rows[0]?.balance || '0');
@@ -929,7 +950,7 @@ export class ReportingService {
       FROM accounting.journal_entry_lines jel
       JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
       JOIN accounting.accounts a ON a.id = jel.account_id
-      WHERE a.code = '2101' AND je.status = 'POSTED' AND je.entry_date <= $1
+      WHERE a.code = '2101' AND je.status IN ('POSTED', 'REVERSED') AND je.entry_date <= $1
     `, [dateLimit]);
 
     const glBalance = parseFloat(glRes.rows[0]?.balance || '0');
@@ -981,7 +1002,7 @@ export class ReportingService {
       FROM accounting.journal_entry_lines jel
       JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
       JOIN accounting.accounts a ON a.id = jel.account_id
-      WHERE a.code = '1105' AND je.status = 'POSTED' ${dateCond}
+      WHERE a.code = '1105' AND je.status IN ('POSTED', 'REVERSED') ${dateCond}
     `, params);
 
     // Output Tax (from Sales on Account 2105)
@@ -994,7 +1015,7 @@ export class ReportingService {
       FROM accounting.journal_entry_lines jel
       JOIN accounting.journal_entries je ON je.id = jel.journal_entry_id
       JOIN accounting.accounts a ON a.id = jel.account_id
-      WHERE a.code = '2105' AND je.status = 'POSTED' ${dateCond}
+      WHERE a.code = '2105' AND je.status IN ('POSTED', 'REVERSED') ${dateCond}
     `, params);
 
     const totalInputTax = inputRes.rows.reduce((sum, r) => sum + parseFloat(r.inputTaxAmount || '0'), 0);
