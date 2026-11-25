@@ -499,9 +499,11 @@ apiRouter.get('/journal-entries/:id', async (req: Request, res: Response) => {
     }
 
     const linesRes = await db.query<any>(`
-      SELECT jl.*, a.code as "accountCode", a.name as "accountName"
+      SELECT jl.*, a.code as "accountCode", a.name as "accountName",
+             cc.code as "costCenterCode", cc.name as "costCenterName"
       FROM accounting.journal_entry_lines jl
       JOIN accounting.accounts a ON a.id = jl.account_id
+      LEFT JOIN accounting.cost_centers cc ON cc.id = jl.cost_center_id
       WHERE jl.journal_entry_id = $1
       ORDER BY jl.line_number ASC
     `, [req.params.id]);
@@ -597,10 +599,44 @@ apiRouter.get('/accounting/cost-centers', async (_req: Request, res: Response) =
 // ==========================================
 // 5. Reports (التقارير المالية)
 // ==========================================
-apiRouter.get('/reports/trial-balance', async (_req: Request, res: Response) => {
+apiRouter.get('/reports/trial-balance', async (req: Request, res: Response) => {
   try {
-    const trialBalance = await AccountingService.getTrialBalance();
-    res.json(trialBalance);
+    const { ReportingService } = await import('./reportingService.ts');
+    const tb = await ReportingService.getTrialBalance({
+      branchId:      req.query.branchId      as string,
+      fiscalYearId:  req.query.fiscalYearId  as string,
+      fiscalPeriodId:req.query.fiscalPeriodId as string,
+      fromDate:      req.query.fromDate      as string,
+      toDate:        req.query.toDate        as string,
+    });
+
+    // Map to shape expected by TrialBalancePage.tsx
+    const accounts = (tb.accounts || []).map((a: any) => ({
+      accountCode:   a.accountCode,
+      accountName:   a.accountName,
+      level:         a.level ?? 1,
+      debit:         String(a.closingDebit  ?? 0),
+      credit:        String(a.closingCredit ?? 0),
+      balance:       String((a.closingDebit ?? 0) - (a.closingCredit ?? 0)),
+    }));
+
+    res.json({
+      // TrialBalancePage.tsx reads: accounts[], totalDebit, totalCredit, isBalanced
+      accounts,
+      totalDebit:  tb.totalClosingDebit  ?? 0,
+      totalCredit: tb.totalClosingCredit ?? 0,
+      isBalanced:  tb.isBalanced,
+      // FinancialReportsPage.tsx reads: totalOpeningDebit/Credit, totalPeriodDebit/Credit, totalClosingDebit/Credit
+      totalOpeningDebit:  tb.totalOpeningDebit  ?? 0,
+      totalOpeningCredit: tb.totalOpeningCredit ?? 0,
+      totalPeriodDebit:   tb.totalPeriodDebit   ?? 0,
+      totalPeriodCredit:  tb.totalPeriodCredit  ?? 0,
+      totalClosingDebit:  tb.totalClosingDebit  ?? 0,
+      totalClosingCredit: tb.totalClosingCredit ?? 0,
+      difference:  tb.difference ?? 0,
+      fromDate:    tb.fromDate,
+      toDate:      tb.toDate,
+    });
   } catch (error: any) {
     sendRouteError(res, 500, error);
   }
@@ -3060,17 +3096,64 @@ apiRouter.get('/reports/general-ledger', async (req: Request, res: Response) => 
   try {
     const { ReportingService } = await import('./reportingService.ts');
     const report = await ReportingService.getGeneralLedger({
-      accountId: req.query.accountId as string,
-      branchId: req.query.branchId as string,
-      costCenterId: req.query.costCenterId as string,
-      fiscalYearId: req.query.fiscalYearId as string,
-      fiscalPeriodId: req.query.fiscalPeriodId as string,
-      fromDate: req.query.fromDate as string,
-      toDate: req.query.toDate as string,
-      limit: req.query.limit ? parseInt(req.query.limit as string, 10) : undefined,
+      accountId:     req.query.accountId     as string,
+      branchId:      req.query.branchId      as string,
+      costCenterId:  req.query.costCenterId  as string,
+      fiscalYearId:  req.query.fiscalYearId  as string,
+      fiscalPeriodId:req.query.fiscalPeriodId as string,
+      fromDate:      req.query.fromDate      as string,
+      toDate:        req.query.toDate        as string,
+      limit:  req.query.limit  ? parseInt(req.query.limit  as string, 10) : undefined,
       offset: req.query.offset ? parseInt(req.query.offset as string, 10) : undefined,
     });
-    res.json(report);
+
+    // Group flat lines by account for GeneralLedgerPage.tsx
+    const accountMap = new Map<string, {
+      accountCode: string; accountName: string;
+      openingBalance: number; totalDebit: number; totalCredit: number;
+      closingBalance: number; entries: any[];
+    }>();
+
+    for (const line of report.lines) {
+      const key = line.accountCode;
+      if (!accountMap.has(key)) {
+        accountMap.set(key, {
+          accountCode:    line.accountCode,
+          accountName:    line.accountName,
+          openingBalance: 0,
+          totalDebit:     0,
+          totalCredit:    0,
+          closingBalance: 0,
+          entries:        [],
+        });
+      }
+      const acc = accountMap.get(key)!;
+      acc.totalDebit  += line.debit;
+      acc.totalCredit += line.credit;
+      acc.entries.push({
+        entryDate:    line.entryDate,
+        entryNumber:  line.entryNumber,
+        description:  line.lineDescription || line.entryDescription,
+        debit:        line.debit,
+        credit:       line.credit,
+        runningBalance: line.runningBalance,
+      });
+    }
+
+    // Recalculate closing balance per account
+    for (const acc of accountMap.values()) {
+      acc.closingBalance = acc.openingBalance + acc.totalDebit - acc.totalCredit;
+    }
+
+    res.json({
+      openingBalance: report.openingBalance,
+      totalDebit:     report.totalDebit,
+      totalCredit:    report.totalCredit,
+      closingBalance: report.closingBalance,
+      linesCount:     report.linesCount,
+      lines:          report.lines,
+      accounts:       Array.from(accountMap.values()),
+    });
   } catch (error: any) {
     sendRouteError(res, 500, error);
   }
@@ -3091,23 +3174,6 @@ apiRouter.get('/reports/account-statement/:id', async (req: Request, res: Respon
     res.json(statement);
   } catch (error: any) {
     sendRouteError(res, 404, error);
-  }
-});
-
-// 3. Trial Balance
-apiRouter.get('/reports/trial-balance', async (req: Request, res: Response) => {
-  try {
-    const { ReportingService } = await import('./reportingService.ts');
-    const tb = await ReportingService.getTrialBalance({
-      branchId: req.query.branchId as string,
-      fiscalYearId: req.query.fiscalYearId as string,
-      fiscalPeriodId: req.query.fiscalPeriodId as string,
-      fromDate: req.query.fromDate as string,
-      toDate: req.query.toDate as string,
-    });
-    res.json(tb);
-  } catch (error: any) {
-    sendRouteError(res, 500, error);
   }
 });
 

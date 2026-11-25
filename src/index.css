@@ -11,6 +11,8 @@
 @import "./design/tokens.css";
 /* PHASE 10.0 — shared bilingual report header (print + screen) */
 @import "./company-print.css";
+/* PHASE 5.4 — قوالب الطباعة المالية الاحترافية (A4 + 80mm Thermal) */
+@import "./print-templates.css";
 
 @layer base {
   body {

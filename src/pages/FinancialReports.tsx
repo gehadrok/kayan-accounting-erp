@@ -321,7 +321,7 @@ export const FinancialReportsPage: React.FC = () => {
                 <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
                   <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">مجمل الربح (Gross Profit)</div>
                   <div className="text-2xl font-black text-blue-400">{formatYER(pnlData.grossProfit)}</div>
-                  <div className="text-xs text-blue-400/80 mt-2 font-semibold">الهامش: {(pnlData.grossMargin * 100).toFixed(1)}%</div>
+                  <div className="text-xs text-blue-400/80 mt-2 font-semibold">الهامش: {Number(pnlData.grossMargin || 0).toFixed(1)}%</div>
                 </div>
 
                 <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
@@ -337,7 +337,7 @@ export const FinancialReportsPage: React.FC = () => {
                     {formatYER(pnlData.netProfit)}
                   </div>
                   <div className="text-xs text-slate-400 mt-2 font-semibold">
-                    صافي الهامش: {(pnlData.netMargin * 100).toFixed(1)}%
+                    صافي الهامش: {Number(pnlData.netMargin || 0).toFixed(1)}%
                   </div>
                 </div>
               </div>

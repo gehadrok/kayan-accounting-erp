@@ -508,8 +508,14 @@ export class FinancialIntegrityService {
     const pnl = await ReportingService.getIncomeStatement({ fiscalYearId });
     const netProfit = pnl.netProfit;
 
-    // Fetch Retained Earnings account (32)
-    const reRes = await db.query<any>("SELECT id FROM accounting.accounts WHERE code = '32' LIMIT 1");
+    // Fetch Retained Earnings account (YemenSoft: 2341010001 or fallback to any leaf Retained Earnings account)
+    let reRes = await db.query<any>("SELECT id FROM accounting.accounts WHERE code = '2341010001' AND is_group = FALSE LIMIT 1");
+    if (reRes.rows.length === 0) {
+      reRes = await db.query<any>("SELECT id FROM accounting.accounts WHERE code LIKE '2341%' AND is_group = FALSE LIMIT 1");
+    }
+    if (reRes.rows.length === 0) {
+      reRes = await db.query<any>("SELECT id FROM accounting.accounts WHERE is_group = FALSE AND (name LIKE '%أرباح مبقاة%' OR name LIKE '%الارباح والخسائر%') LIMIT 1");
+    }
     const reAccId = reRes.rows[0]?.id;
 
     let closingJe: any = null;

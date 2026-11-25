@@ -55,8 +55,9 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
   {
     name: 'المبيعات',
     icon: ShoppingCart,
-    prefixes: ['/sales'],
+    prefixes: ['/sales', '/pos'],
     subItems: [
+      { name: 'نقطة البيع السريعة (POS)', path: '/sales/pos', keywords: ['pos', 'كاشير', 'باركود', 'سريعة'] },
       { name: 'العملاء', path: '/sales/customers', keywords: ['customers', 'عملاء'] },
       { name: 'فواتير المبيعات', path: '/sales/invoices', keywords: ['invoices', 'sales', 'مبيعات'] },
       { name: 'سندات القبض', path: '/sales/receipts', keywords: ['receipts', 'قبض'] },

@@ -2,6 +2,7 @@ import React from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { Dashboard } from './pages/Dashboard';
 import { CustomersPage } from './pages/Customers';
+import { PointOfSalePage } from './pages/PointOfSale';
 import { SalesInvoicesPage } from './pages/SalesInvoices';
 import { ReceiptsPage } from './pages/Receipts';
 import { SalesReturnsPage } from './pages/SalesReturns';
@@ -68,6 +69,11 @@ const MainView: React.FC = () => {
 
     switch (currentRoute) {
       // Sales
+      case '/pos':
+      case 'pos':
+      case '/sales/pos':
+      case 'sales-pos':
+        return <PointOfSalePage />;
       case '/sales/customers':
       case 'customers':
         return <CustomersPage />;

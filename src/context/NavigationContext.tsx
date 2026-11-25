@@ -3,6 +3,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 export const ROUTE_MAP: Record<string, string> = {
   // Legacy alias -> canonical route
   'dashboard': '/',
+  'pos': '/sales/pos',
+  'sales-pos': '/sales/pos',
   'customers': '/sales/customers',
   'sales-invoices': '/sales/invoices',
   'receipts': '/sales/receipts',

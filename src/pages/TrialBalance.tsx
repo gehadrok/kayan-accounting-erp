@@ -217,7 +217,7 @@ export const TrialBalancePage: React.FC = () => {
                     {parseFloat(tb.totalCredit || '0').toLocaleString()}
                   </td>
                   <td className="py-3 px-4 font-mono text-left text-sm text-slate-900">
-                    {parseFloat(tb.totalDebit || '0').toLocaleString()} YER
+                    {(parseFloat(tb.totalDebit || '0') - parseFloat(tb.totalCredit || '0')).toLocaleString()} YER
                   </td>
                 </tr>
               </tfoot>

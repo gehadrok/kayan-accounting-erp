@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -6,14 +6,17 @@ import {
   ExternalLink,
   Eye,
   FileSpreadsheet,
+  Keyboard,
   Plus,
   RefreshCw,
   RotateCcw,
+  Scale,
   Trash2,
 } from 'lucide-react';
 import { useCompanyProfile } from '../context/CompanyProfileContext';
 import { useSettings } from '../context/SettingsContext';
 import { ReportHeader, type CompanyIdentity } from '../components/company/ReportHeader';
+import { AccountAutocomplete } from '../components/lookups/AccountAutocomplete';
 import {
   Button,
   Card,
@@ -67,6 +70,9 @@ interface JournalEntryLine {
   account_id?: string;
   accountCode?: string;
   accountName?: string;
+  cost_center_id?: string;
+  costCenterCode?: string;
+  costCenterName?: string;
   description?: string;
   debit?: string | number;
   credit?: string | number;
@@ -95,6 +101,7 @@ interface JournalEntryDetail {
 
 interface FormLine {
   accountId: string;
+  costCenterId?: string;
   debit: number;
   credit: number;
   description: string;
@@ -146,8 +153,8 @@ const EntryStatusBadge: React.FC<{ status: JournalStatus; size?: 'sm' | 'md' }> 
 };
 
 const emptyFormLines = (): FormLine[] => [
-  { accountId: '', debit: 0, credit: 0, description: '' },
-  { accountId: '', debit: 0, credit: 0, description: '' },
+  { accountId: '', costCenterId: '', debit: 0, credit: 0, description: '' },
+  { accountId: '', costCenterId: '', debit: 0, credit: 0, description: '' },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -268,6 +275,7 @@ export const JournalEntriesPage: React.FC = () => {
 
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [costCenters, setCostCenters] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
@@ -281,6 +289,27 @@ export const JournalEntriesPage: React.FC = () => {
   const [description, setDescription] = useState('');
   const [lines, setLines] = useState<FormLine[]>(emptyFormLines);
 
+  /* مصفوفة مراجع الخلايا للتنقل السريع عبر لوحة المفاتيح */
+  const lineRefs = useRef<Array<{
+    account: HTMLInputElement | null;
+    costCenter: HTMLSelectElement | null;
+    desc: HTMLInputElement | null;
+    debit: HTMLInputElement | null;
+    credit: HTMLInputElement | null;
+  }>>([]);
+
+  const focusCell = useCallback((rowIdx: number, field: 'account' | 'costCenter' | 'desc' | 'debit' | 'credit') => {
+    setTimeout(() => {
+      const row = lineRefs.current[rowIdx];
+      if (row && row[field]) {
+        row[field]?.focus();
+        if (row[field] instanceof HTMLInputElement) {
+          (row[field] as HTMLInputElement).select();
+        }
+      }
+    }, 15);
+  }, []);
+
   /* ---------------------------------------------------------------- */
   /* Data                                                             */
   /* ---------------------------------------------------------------- */
@@ -288,9 +317,10 @@ export const JournalEntriesPage: React.FC = () => {
   const fetchEntries = async () => {
     try {
       setLoading(true);
-      const [resEntries, resAccounts] = await Promise.all([
+      const [resEntries, resAccounts, resCostCenters] = await Promise.all([
         fetch('/api/journal-entries?limit=100'),
         fetch('/api/accounts'),
+        fetch('/api/accounting/cost-centers'),
       ]);
       if (resEntries.ok) {
         // قائمة القيود تعيد camelCase بينما شاشة العرض تعمل على الحقول
@@ -313,6 +343,9 @@ export const JournalEntriesPage: React.FC = () => {
       }
       if (resAccounts.ok) {
         setAccounts(await resAccounts.json());
+      }
+      if (resCostCenters.ok) {
+        setCostCenters(await resCostCenters.json());
       }
     } catch (err) {
       console.error('Error fetching journal entries:', err);
@@ -391,7 +424,9 @@ export const JournalEntriesPage: React.FC = () => {
   /* ---------------------------------------------------------------- */
 
   const addLine = () => {
-    setLines([...lines, { accountId: '', debit: 0, credit: 0, description: '' }]);
+    const nextIdx = lines.length;
+    setLines([...lines, { accountId: '', costCenterId: '', debit: 0, credit: 0, description: '' }]);
+    focusCell(nextIdx, 'account');
   };
 
   const removeLine = (idx: number) => {
@@ -410,6 +445,53 @@ export const JournalEntriesPage: React.FC = () => {
   const totalCredit = lines.reduce((sum, l) => sum + (parseFloat(l.credit as any) || 0), 0);
   const difference = Math.abs(totalDebit - totalCredit);
   const isBalanced = difference < 0.001 && totalDebit > 0;
+
+  const handleAutoBalance = () => {
+    const diff = totalDebit - totalCredit;
+    if (Math.abs(diff) < 0.001) return;
+
+    // Check if the last line is empty and can receive the balancing figure
+    const lastIdx = lines.length - 1;
+    const lastLine = lines[lastIdx];
+    if (lastLine && Number(lastLine.debit) === 0 && Number(lastLine.credit) === 0) {
+      if (diff > 0) {
+        updateLine(lastIdx, 'credit', diff);
+      } else {
+        updateLine(lastIdx, 'debit', Math.abs(diff));
+      }
+      focusCell(lastIdx, 'account');
+    } else {
+      // Append new line with balancing amount
+      setLines([
+        ...lines,
+        {
+          accountId: '',
+          costCenterId: '',
+          debit: diff < 0 ? Math.abs(diff) : 0,
+          credit: diff > 0 ? diff : 0,
+          description: description || 'موازنة القيد'
+        }
+      ]);
+      focusCell(lines.length, 'account');
+    }
+  };
+
+  useEffect(() => {
+    if (workspaceMode !== 'create') return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        addLine();
+      } else if (e.key === 'F9') {
+        e.preventDefault();
+        handleAutoBalance();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [workspaceMode, lines, description, totalDebit, totalCredit]);
 
   const canSaveEntry =
     isBalanced &&
@@ -494,6 +576,7 @@ export const JournalEntriesPage: React.FC = () => {
           description,
           lines: lines.map((l) => ({
             accountId: l.accountId,
+            costCenterId: l.costCenterId || undefined,
             debit: parseFloat(l.debit as any) || 0,
             credit: parseFloat(l.credit as any) || 0,
             description: l.description || description,
@@ -696,13 +779,14 @@ export const JournalEntriesPage: React.FC = () => {
         title="سطور القيد"
         description={`${detailLines.length} سطر — بيانات محفوظة للقراءة فقط`}
       >
-        <DocumentTableShell minWidth={880}>
+        <DocumentTableShell minWidth={920}>
           <table className="w-full text-right text-xs">
             <thead className="border-b border-line bg-surface-muted font-bold text-ink-muted">
               <tr>
                 <th className="w-10 px-3 py-3">#</th>
                 <th className="px-3 py-3">كود الحساب</th>
                 <th className="px-3 py-3">اسم الحساب</th>
+                <th className="px-3 py-3">مركز التكلفة</th>
                 <th className="px-3 py-3">بيان السطر</th>
                 <th className="px-3 py-3 text-end">مدين</th>
                 <th className="px-3 py-3 text-end">دائن</th>
@@ -722,6 +806,16 @@ export const JournalEntriesPage: React.FC = () => {
                     {line.accountName || '—'}
                   </td>
                   <td className="px-3 py-2.5 text-ink-muted">
+                    {line.costCenterName ? (
+                      <span className="inline-flex items-center gap-1 rounded bg-surface-muted px-1.5 py-0.5 text-[11px] text-ink">
+                        <span className="font-mono text-brand font-bold">{line.costCenterCode}</span>
+                        <span>{line.costCenterName}</span>
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 text-ink-muted">
                     {line.description || '—'}
                   </td>
                   <td className="kayan-numeric px-3 py-2.5 text-end font-bold">
@@ -734,7 +828,7 @@ export const JournalEntriesPage: React.FC = () => {
               ))}
               {detailLines.length === 0 && (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <EmptyState
                       icon={<FileSpreadsheet size={30} />}
                       title="لا توجد سطور محفوظة"
@@ -746,7 +840,7 @@ export const JournalEntriesPage: React.FC = () => {
             </tbody>
             <tfoot className="border-t border-line bg-surface-muted font-bold text-ink">
               <tr>
-                <td colSpan={4} className="px-3 py-2.5">
+                <td colSpan={5} className="px-3 py-2.5">
                   المجموع:
                 </td>
                 <td className="kayan-numeric px-3 py-2.5 text-end text-brand">
@@ -790,23 +884,59 @@ export const JournalEntriesPage: React.FC = () => {
         title="سطور القيد المحاسبي"
         description={`${lines.length} سطر — أضف أطراف المعاملة ثم احفظ القيد المتوازن`}
         actions={
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<Plus size={14} />}
-            onClick={addLine}
-          >
-            إضافة طرف
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Scale size={14} />}
+              onClick={handleAutoBalance}
+              title="موازنة القيد آلياً وحساب الفارق (F9)"
+            >
+              موازنة القيد (F9)
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Plus size={14} />}
+              onClick={addLine}
+              title="إضافة طرف جديد (F2)"
+            >
+              إضافة طرف (F2)
+            </Button>
+          </div>
         }
       >
-        <DocumentTableShell minWidth={900}>
+        {/* شريط تلميحات لوحة المفاتيح للمحاسب */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-soft bg-surface-muted/60 px-4 py-2 text-[11px] text-ink-muted">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-1 font-semibold text-ink">
+              <Keyboard size={13} className="text-brand" />
+              إدخال سريع بلوحة المفاتيح:
+            </span>
+            <span className="hidden sm:inline">
+              <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">Enter</kbd> انتقال للخلايا والسطر التالي
+            </span>
+            <span>
+              <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F9</kbd> موازنة القيد
+            </span>
+            <span>
+              <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F4</kbd> بحث الدليل الشامل
+            </span>
+            <span>
+              <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F2</kbd> سطر جديد
+            </span>
+          </div>
+          <span className="text-[10px] font-semibold text-ink-muted">الريال اليمني (YER)</span>
+        </div>
+
+        <DocumentTableShell minWidth={950}>
           <table className="w-full text-right text-xs">
             <thead className="border-b border-line bg-surface-muted font-bold text-ink-muted">
               <tr>
                 <th className="w-10 px-3 py-3">#</th>
-                <th className="min-w-[240px] px-3 py-3">الحساب</th>
-                <th className="min-w-[220px] px-3 py-3">البيان الفرعي</th>
+                <th className="min-w-[260px] px-3 py-3">الحساب المحاسبي</th>
+                <th className="w-44 px-3 py-3">مركز التكلفة</th>
+                <th className="min-w-[200px] px-3 py-3">البيان الفرعي</th>
                 <th className="w-32 px-3 py-3 text-end">مدين (ر.ي)</th>
                 <th className="w-32 px-3 py-3 text-end">دائن (ر.ي)</th>
                 <th className="w-12 px-2 py-3" />
@@ -817,56 +947,160 @@ export const JournalEntriesPage: React.FC = () => {
                 <tr key={idx} className="transition-colors hover:bg-surface-hover/50">
                   <td className="px-3 py-2 font-mono text-ink-muted">{idx + 1}</td>
                   <td className="px-2 py-2">
-                    <Select
-                      size="sm"
+                    <AccountAutocomplete
+                      accounts={accounts}
                       value={line.accountId}
-                      onChange={(e) => updateLine(idx, 'accountId', e.target.value)}
-                      options={accounts
-                        .filter((a) => !a.is_group)
-                        .map((a) => ({
-                          value: a.id,
-                          label: `${a.code} - ${a.name}`,
-                        }))}
-                      placeholder="-- اختر الحساب --"
+                      inputRef={{
+                        get current() {
+                          return lineRefs.current[idx]?.account || null;
+                        },
+                        set current(el) {
+                          if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                          lineRefs.current[idx].account = el;
+                        }
+                      }}
+                      onChange={(accId, acc) => {
+                        updateLine(idx, 'accountId', accId);
+                        if (acc) {
+                          focusCell(idx, 'costCenter');
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          focusCell(idx, 'costCenter');
+                        }
+                      }}
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <Input
-                      size="sm"
+                    <select
+                      ref={(el) => {
+                        if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                        lineRefs.current[idx].costCenter = el;
+                      }}
+                      value={line.costCenterId || ''}
+                      onChange={(e) => updateLine(idx, 'costCenterId', e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          focusCell(idx, 'desc');
+                        }
+                      }}
+                      className="h-8 w-full rounded-control border border-line bg-surface px-2 text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    >
+                      <option value="">-- بدون مركز --</option>
+                      {costCenters.map((cc) => (
+                        <option key={cc.id} value={cc.id}>
+                          {cc.code} - {cc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-2">
+                    <input
+                      ref={(el) => {
+                        if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                        lineRefs.current[idx].desc = el;
+                      }}
                       type="text"
                       placeholder="بيان فرعي (اختياري)"
                       value={line.description}
                       onChange={(e) => updateLine(idx, 'description', e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          focusCell(idx, 'debit');
+                        }
+                      }}
+                      className="h-8 w-full rounded-control border border-line bg-surface px-2.5 text-xs text-ink transition-colors placeholder:text-ink-muted/60 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <Input
-                      size="sm"
+                    <input
+                      ref={(el) => {
+                        if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                        lineRefs.current[idx].debit = el;
+                      }}
                       type="number"
                       min="0"
                       step="any"
-                      numeric
                       placeholder="0"
                       value={line.debit || ''}
-                      onChange={(e) =>
-                        updateLine(idx, 'debit', parseFloat(e.target.value) || 0)
-                      }
-                      className="text-end font-mono font-bold"
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0;
+                        updateLine(idx, 'debit', val);
+                        if (val > 0 && line.credit) {
+                          updateLine(idx, 'credit', 0);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const val = parseFloat(line.debit as any) || 0;
+                          if (val > 0) {
+                            updateLine(idx, 'credit', 0);
+                            if (idx === lines.length - 1) {
+                              const curDebit = lines.reduce((s, l, i) => s + (i === idx ? val : (parseFloat(l.debit as any) || 0)), 0);
+                              const curCredit = lines.reduce((s, l, i) => s + (i === idx ? 0 : (parseFloat(l.credit as any) || 0)), 0);
+                              const diff = curDebit - curCredit;
+                              const nextCredit = diff > 0 ? diff : 0;
+                              setLines(prev => [...prev, { accountId: '', costCenterId: '', debit: 0, credit: nextCredit, description: line.description || description }]);
+                              focusCell(idx + 1, 'account');
+                            } else {
+                              focusCell(idx + 1, 'account');
+                            }
+                          } else {
+                            focusCell(idx, 'credit');
+                          }
+                        }
+                      }}
+                      className="h-8 w-full rounded-control border border-line bg-surface px-2.5 text-end font-mono font-bold text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <Input
-                      size="sm"
+                    <input
+                      ref={(el) => {
+                        if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                        lineRefs.current[idx].credit = el;
+                      }}
                       type="number"
                       min="0"
                       step="any"
-                      numeric
                       placeholder="0"
                       value={line.credit || ''}
-                      onChange={(e) =>
-                        updateLine(idx, 'credit', parseFloat(e.target.value) || 0)
-                      }
-                      className="text-end font-mono font-bold"
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0;
+                        updateLine(idx, 'credit', val);
+                        if (val > 0 && line.debit) {
+                          updateLine(idx, 'debit', 0);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const val = parseFloat(line.credit as any) || 0;
+                          if (val > 0) {
+                            updateLine(idx, 'debit', 0);
+                            if (idx === lines.length - 1) {
+                              const curDebit = lines.reduce((s, l, i) => s + (i === idx ? 0 : (parseFloat(l.debit as any) || 0)), 0);
+                              const curCredit = lines.reduce((s, l, i) => s + (i === idx ? val : (parseFloat(l.credit as any) || 0)), 0);
+                              const diff = curCredit - curDebit;
+                              if (diff > 0.001) {
+                                setLines(prev => [...prev, { accountId: '', costCenterId: '', debit: diff, credit: 0, description: line.description || description }]);
+                                focusCell(idx + 1, 'account');
+                              }
+                            } else {
+                              focusCell(idx + 1, 'account');
+                            }
+                          } else {
+                            if (idx < lines.length - 1) {
+                              focusCell(idx + 1, 'account');
+                            }
+                          }
+                        }
+                      }}
+                      className="h-8 w-full rounded-control border border-line bg-surface px-2.5 text-end font-mono font-bold text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                     />
                   </td>
                   <td className="px-2 py-2 text-center">
@@ -885,7 +1119,7 @@ export const JournalEntriesPage: React.FC = () => {
             </tbody>
             <tfoot className="border-t border-line bg-surface-muted font-bold text-ink">
               <tr>
-                <td colSpan={3} className="px-3 py-2.5">
+                <td colSpan={4} className="px-3 py-2.5">
                   الإجمالي
                 </td>
                 <td className="kayan-numeric px-3 py-2.5 text-end text-brand">
