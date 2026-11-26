@@ -468,7 +468,7 @@ export const PointOfSalePage: React.FC = () => {
           </div>
 
           {/* Product Cards Grid */}
-          <div className="grid flex-1 grid-cols-2 gap-2.5 overflow-y-auto sm:grid-cols-3 xl:grid-cols-4">
+          <div className="grid flex-1 auto-rows-max content-start grid-cols-2 gap-2.5 overflow-y-auto sm:grid-cols-3 xl:grid-cols-4">
             {filteredItems.map((item) => (
               <div
                 key={item.id}

@@ -286,8 +286,8 @@ export const FinancialReportsPage: React.FC = () => {
               onClick={() => setActiveTab(tab.key as any)}
               className={`px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 whitespace-nowrap transition-all ${
                 isActive
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/25 border border-blue-500/40'
-                  : 'bg-slate-900/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-slate-800/60'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/25 border border-blue-400'
+                  : 'bg-slate-900 text-slate-200 hover:text-white hover:bg-slate-800 border border-slate-700'
               }`}
             >
               <Icon className="w-4 h-4" />
