@@ -211,7 +211,7 @@ const SalesInvoicePrint: React.FC<{
   const total = parseFloat(invoice.total || '0');
 
   return (
-    <div className="bg-white p-8 text-slate-800" dir="rtl">
+    <div className="kayan-print-report hidden print:block bg-white p-8 text-slate-800" dir="rtl">
       <ReportHeader
         company={company}
         title={`فاتورة مبيعات رقم ${invoice.invoice_number}`}
