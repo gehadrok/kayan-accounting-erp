@@ -1,17 +1,21 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   AlertTriangle,
+  Calendar,
   CheckCircle2,
+  ChevronLeft,
   Clock,
   ExternalLink,
   Eye,
   FileSpreadsheet,
+  Filter,
   Keyboard,
   Plus,
   RefreshCw,
   RotateCcw,
   Scale,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useCompanyProfile } from '../context/CompanyProfileContext';
 import { useSettings } from '../context/SettingsContext';
@@ -28,7 +32,6 @@ import {
   LoadingState,
   PageHeader,
   PageToolbar,
-  Select,
   StatusBadge,
 } from '../components/ui';
 import {
@@ -38,8 +41,6 @@ import {
   DocumentReadField,
   DocumentReadGrid,
   DocumentSummaryCard,
-  DocumentTableShell,
-  DocumentWorkspace,
   type DocumentMode,
   type DocumentStatus,
   type SummaryRow,
@@ -93,14 +94,15 @@ interface JournalEntryDetail {
   created_by?: string | null;
   created_at?: string;
   updated_at?: string;
-  /** متاح فقط إذا أعاد المسار اسم المنشئ؛ وإلا يبقى غير متوفر. */
   createdByName?: string | null;
   updatedByName?: string | null;
   lines?: JournalEntryLine[];
 }
 
 interface FormLine {
+  mainAccountId?: string;
   accountId: string;
+  analyticalId?: string;
   costCenterId?: string;
   debit: number;
   credit: number;
@@ -113,10 +115,9 @@ interface FormLine {
 
 function money(value: number | string | null | undefined): string {
   const n = Number(value);
-  return Number.isFinite(n) ? n.toLocaleString('en-US') : '0';
+  return Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '0';
 }
 
-/** التواريخ المعروضة دائماً YYYY-MM-DD من مصدرها المحفوظ. */
 function dateOnly(value?: string | null): string {
   return value ? String(value).slice(0, 10) : '';
 }
@@ -153,8 +154,8 @@ const EntryStatusBadge: React.FC<{ status: JournalStatus; size?: 'sm' | 'md' }> 
 };
 
 const emptyFormLines = (): FormLine[] => [
-  { accountId: '', costCenterId: '', debit: 0, credit: 0, description: '' },
-  { accountId: '', costCenterId: '', debit: 0, credit: 0, description: '' },
+  { mainAccountId: '', accountId: '', analyticalId: '', costCenterId: '', debit: 0, credit: 0, description: '' },
+  { mainAccountId: '', accountId: '', analyticalId: '', costCenterId: '', debit: 0, credit: 0, description: '' },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -200,6 +201,7 @@ const JournalEntryPrint: React.FC<{
               <th className="px-3 py-2.5">#</th>
               <th className="px-3 py-2.5">كود الحساب</th>
               <th className="px-3 py-2.5">اسم الحساب</th>
+              <th className="px-3 py-2.5">مركز التكلفة</th>
               <th className="px-3 py-2.5">بيان السطر</th>
               <th className="px-3 py-2.5 text-left">مدين</th>
               <th className="px-3 py-2.5 text-left">دائن</th>
@@ -215,6 +217,9 @@ const JournalEntryPrint: React.FC<{
                 <td className="px-3 py-2.5 font-semibold text-slate-800">
                   {line.accountName || '—'}
                 </td>
+                <td className="px-3 py-2.5 text-slate-500">
+                  {line.costCenterName ? `${line.costCenterCode || ''} ${line.costCenterName}` : '—'}
+                </td>
                 <td className="px-3 py-2.5 text-slate-500">{line.description || '—'}</td>
                 <td className="px-3 py-2.5 text-left font-mono font-bold">
                   {Number(line.debit) > 0 ? money(line.debit) : '—'}
@@ -227,13 +232,13 @@ const JournalEntryPrint: React.FC<{
           </tbody>
           <tfoot className="border-t border-slate-200 bg-slate-50 font-bold">
             <tr>
-              <td colSpan={4} className="px-3 py-2.5">
+              <td colSpan={5} className="px-3 py-2.5">
                 المجموع:
               </td>
               <td className="px-3 py-2.5 text-left font-mono text-blue-700">
                 {money(totalDebit)}
               </td>
-              <td className="px-3 py-2.5 text-left font-mono text-blue-700">
+              <td className="px-3 py-2.5 text-left font-mono text-emerald-700">
                 {money(totalCredit)}
               </td>
             </tr>
@@ -275,21 +280,29 @@ export const JournalEntriesPage: React.FC = () => {
 
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [costCenters, setCostCenters] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
 
+  // List Filters
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | JournalStatus>('ALL');
+  const [fromDateFilter, setFromDateFilter] = useState('');
+  const [toDateFilter, setToDateFilter] = useState('');
+
+  // Workspace state
   const [workspaceMode, setWorkspaceMode] = useState<DocumentMode | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntryDetail | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  /* بيانات إنشاء القيد — نفس الحقول والحمولة السابقة. */
+  // Create Form State
   const [entryDate, setEntryDate] = useState(new Date().toISOString().split('T')[0]);
   const [description, setDescription] = useState('');
   const [lines, setLines] = useState<FormLine[]>(emptyFormLines);
 
-  /* مصفوفة مراجع الخلايا للتنقل السريع عبر لوحة المفاتيح */
+  // Keyboard navigation refs
   const lineRefs = useRef<Array<{
     account: HTMLInputElement | null;
     costCenter: HTMLSelectElement | null;
@@ -317,14 +330,14 @@ export const JournalEntriesPage: React.FC = () => {
   const fetchEntries = async () => {
     try {
       setLoading(true);
-      const [resEntries, resAccounts, resCostCenters] = await Promise.all([
+      const [resEntries, resAccounts, resCostCenters, resCustomers, resSuppliers] = await Promise.all([
         fetch('/api/journal-entries?limit=100'),
         fetch('/api/accounts'),
         fetch('/api/accounting/cost-centers'),
+        fetch('/api/customers'),
+        fetch('/api/suppliers'),
       ]);
       if (resEntries.ok) {
-        // قائمة القيود تعيد camelCase بينما شاشة العرض تعمل على الحقول
-        // المحفوظة snake_case — نوحّدها مرة واحدة هنا.
         const rows = await resEntries.json();
         setEntries(
           rows.map((r: any) => ({
@@ -346,6 +359,12 @@ export const JournalEntriesPage: React.FC = () => {
       }
       if (resCostCenters.ok) {
         setCostCenters(await resCostCenters.json());
+      }
+      if (resCustomers.ok) {
+        setCustomers(await resCustomers.json());
+      }
+      if (resSuppliers.ok) {
+        setSuppliers(await resSuppliers.json());
       }
     } catch (err) {
       console.error('Error fetching journal entries:', err);
@@ -375,7 +394,7 @@ export const JournalEntriesPage: React.FC = () => {
   };
 
   /* ---------------------------------------------------------------- */
-  /* Post / reverse / delete — نفس المسارات والتأكيدات السابقة         */
+  /* Post / Reverse                                                   */
   /* ---------------------------------------------------------------- */
 
   const handlePostEntry = async (id: string) => {
@@ -420,12 +439,12 @@ export const JournalEntriesPage: React.FC = () => {
   };
 
   /* ---------------------------------------------------------------- */
-  /* Create form                                                      */
+  /* Create Form Logic                                                */
   /* ---------------------------------------------------------------- */
 
   const addLine = () => {
     const nextIdx = lines.length;
-    setLines([...lines, { accountId: '', costCenterId: '', debit: 0, credit: 0, description: '' }]);
+    setLines([...lines, { mainAccountId: '', accountId: '', analyticalId: '', costCenterId: '', debit: 0, credit: 0, description: '' }]);
     focusCell(nextIdx, 'account');
   };
 
@@ -436,9 +455,54 @@ export const JournalEntriesPage: React.FC = () => {
   };
 
   const updateLine = (idx: number, field: string, value: any) => {
-    const updated = [...lines];
-    updated[idx] = { ...updated[idx], [field]: value };
-    setLines(updated);
+    setLines((prev) => {
+      const updated = [...prev];
+      updated[idx] = { ...updated[idx], [field]: value };
+      return updated;
+    });
+  };
+
+  const patchLine = (idx: number, patch: Partial<FormLine>) => {
+    setLines((prev) => {
+      const updated = [...prev];
+      updated[idx] = { ...updated[idx], ...patch };
+      return updated;
+    });
+  };
+
+  // Main/Control accounts: group accounts or parent accounts up to level 4, plus 1103/2101
+  const mainAccounts = accounts.filter((a) => {
+    const isGrp = Boolean(a.isGroup ?? a.is_group);
+    const lvl = Number(a.level || 0);
+    return isGrp || lvl <= 4 || a.code === '1103' || a.code === '2101';
+  });
+
+  const getAnalyticalContext = (mainAccountId?: string) => {
+    if (!mainAccountId) return { kind: 'FREE' as const, mainAcc: null, options: [] as any[] };
+    const mainAcc = accounts.find((a) => a.id === mainAccountId) || null;
+    if (!mainAcc) return { kind: 'FREE' as const, mainAcc: null, options: [] as any[] };
+
+    const code = String(mainAcc.code || '');
+    const name = String(mainAcc.name || '');
+
+    if (code.startsWith('1103') || name.includes('عملاء') || name.includes('مدينون')) {
+      return { kind: 'CUSTOMERS' as const, mainAcc, options: customers };
+    }
+    if (code.startsWith('2101') || name.includes('مورد') || name.includes('دائنون')) {
+      return { kind: 'SUPPLIERS' as const, mainAcc, options: suppliers };
+    }
+
+    const childLeaves = accounts.filter((a) => {
+      const isGrp = Boolean(a.isGroup ?? a.is_group);
+      if (isGrp) return false;
+      return a.parent_id === mainAcc.id || (code && String(a.code || '').startsWith(code) && a.id !== mainAcc.id);
+    });
+
+    if (childLeaves.length === 0 && !Boolean(mainAcc.isGroup ?? mainAcc.is_group)) {
+      return { kind: 'LEAF_SELF' as const, mainAcc, options: [mainAcc] };
+    }
+
+    return { kind: 'SUB_ACCOUNTS' as const, mainAcc, options: childLeaves };
   };
 
   const totalDebit = lines.reduce((sum, l) => sum + (parseFloat(l.debit as any) || 0), 0);
@@ -450,7 +514,6 @@ export const JournalEntriesPage: React.FC = () => {
     const diff = totalDebit - totalCredit;
     if (Math.abs(diff) < 0.001) return;
 
-    // Check if the last line is empty and can receive the balancing figure
     const lastIdx = lines.length - 1;
     const lastLine = lines[lastIdx];
     if (lastLine && Number(lastLine.debit) === 0 && Number(lastLine.credit) === 0) {
@@ -461,7 +524,6 @@ export const JournalEntriesPage: React.FC = () => {
       }
       focusCell(lastIdx, 'account');
     } else {
-      // Append new line with balancing amount
       setLines([
         ...lines,
         {
@@ -469,8 +531,8 @@ export const JournalEntriesPage: React.FC = () => {
           costCenterId: '',
           debit: diff < 0 ? Math.abs(diff) : 0,
           credit: diff > 0 ? diff : 0,
-          description: description || 'موازنة القيد'
-        }
+          description: description || 'موازنة القيد',
+        },
       ]);
       focusCell(lines.length, 'account');
     }
@@ -594,7 +656,6 @@ export const JournalEntriesPage: React.FC = () => {
       setLines(emptyFormLines());
       await fetchEntries();
 
-      // نفس السلوك السابق: فتح تفاصيل القيد المنشأ مباشرة.
       const opened = await viewEntryDetails(created.id);
       if (!opened) {
         setWorkspaceMode(null);
@@ -610,14 +671,24 @@ export const JournalEntriesPage: React.FC = () => {
   /* Derived                                                          */
   /* ---------------------------------------------------------------- */
 
-  const filteredEntries = entries.filter((entry) => matchesEntrySearch(entry, search));
+  const filteredEntries = entries.filter((entry) => {
+    if (!matchesEntrySearch(entry, search)) return false;
+    if (statusFilter !== 'ALL' && entry.status !== statusFilter) return false;
+    const d = dateOnly(entry.entry_date);
+    if (fromDateFilter && d < fromDateFilter) return false;
+    if (toDateFilter && d > toDateFilter) return false;
+    return true;
+  });
 
   const postedCount = entries.filter((entry) => entry.status === 'POSTED').length;
   const draftCount = entries.filter((entry) => entry.status === 'DRAFT').length;
   const reversedCount = entries.filter((entry) => entry.status === 'REVERSED').length;
 
+  const filteredTotalDebit = filteredEntries.reduce((s, e) => s + (Number(e.total_debit) || 0), 0);
+  const filteredTotalCredit = filteredEntries.reduce((s, e) => s + (Number(e.total_credit) || 0), 0);
+
   /* ---------------------------------------------------------------- */
-  /* Document workspace                                               */
+  /* Voucher Workspace (Full-Width Professional Layout)               */
   /* ---------------------------------------------------------------- */
 
   if (workspaceMode !== null) {
@@ -626,14 +697,8 @@ export const JournalEntriesPage: React.FC = () => {
     const status = selectedEntry?.status;
 
     const detailLines = selectedEntry?.lines || [];
-    const detailTotalDebit = detailLines.reduce(
-      (sum, line) => sum + (Number(line.debit) || 0),
-      0
-    );
-    const detailTotalCredit = detailLines.reduce(
-      (sum, line) => sum + (Number(line.credit) || 0),
-      0
-    );
+    const detailTotalDebit = detailLines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
+    const detailTotalCredit = detailLines.reduce((sum, line) => sum + (Number(line.credit) || 0), 0);
     const detailDifference = Math.abs(detailTotalDebit - detailTotalCredit);
     const detailBalanced = detailDifference < 0.001 && detailTotalDebit > 0;
 
@@ -641,22 +706,14 @@ export const JournalEntriesPage: React.FC = () => {
     const displayTotalCredit = isView ? detailTotalCredit : totalCredit;
     const displayDifference = isView ? detailDifference : difference;
     const displayBalanced = isView ? detailBalanced : isBalanced;
+    const displayLinesCount = isView ? detailLines.length : lines.length;
 
     const documentTitle = isCreate
-      ? 'قيد يومية جديد'
+      ? 'تحرير قيد يومية جديد'
       : `قيد يومية رقم ${selectedEntry?.entry_number || ''}`;
 
-    const documentDescription = isCreate ? (
-      'أدخل تاريخ وبيان القيد وسطور الحسابات، ثم احفظ القيد المتوازن.'
-    ) : (
-      <>
-        بتاريخ <bdi dir="ltr">{dateOnly(selectedEntry?.entry_date)}</bdi> • المصدر:{' '}
-        {selectedEntry?.source_id || '—'}
-      </>
-    );
-
     const badge = isCreate ? (
-      <StatusBadge tone="info">جديدة</StatusBadge>
+      <StatusBadge tone="info">قيد جديد</StatusBadge>
     ) : status ? (
       <EntryStatusBadge status={status} />
     ) : null;
@@ -665,6 +722,7 @@ export const JournalEntriesPage: React.FC = () => {
       isView && (status === 'DRAFT' || status === 'POSTED') ? status : undefined;
 
     const summaryRows: SummaryRow[] = [
+      { label: 'عدد السطور', value: `${displayLinesCount} سطر` },
       { label: 'إجمالي المدين', value: `${money(displayTotalDebit)} ر.ي` },
       { label: 'إجمالي الدائن', value: `${money(displayTotalCredit)} ر.ي` },
       {
@@ -673,492 +731,6 @@ export const JournalEntriesPage: React.FC = () => {
         tone: displayBalanced ? 'success' : 'danger',
       },
     ];
-
-    const infoCard = isView ? (
-      <Card title="بيانات القيد" description="بيانات محفوظة للقراءة فقط">
-        <DocumentReadGrid columns={2}>
-          <DocumentReadField
-            label="رقم القيد"
-            value={selectedEntry?.entry_number}
-            numeric
-          />
-          <DocumentReadField
-            label="الحالة"
-            value={status ? <EntryStatusBadge status={status} size="sm" /> : '—'}
-          />
-          <DocumentReadField
-            label="تاريخ القيد"
-            value={dateOnly(selectedEntry?.entry_date)}
-            numeric
-          />
-          <DocumentReadField
-            label="المصدر"
-            value={selectedEntry?.source_id || '—'}
-          />
-          <DocumentReadField
-            label="البيان"
-            className="sm:col-span-2"
-            value={selectedEntry?.description}
-          />
-        </DocumentReadGrid>
-      </Card>
-    ) : (
-      <Card title="بيانات القيد" description="حقول القيد الأساسية">
-        <div className="space-y-3.5">
-          <DocumentField label="تاريخ القيد" required>
-            <DatePicker
-              value={entryDate}
-              onChange={(e) => setEntryDate(e.target.value)}
-            />
-          </DocumentField>
-
-          <DocumentField label="البيان العام للقيد" required>
-            <Input
-              type="text"
-              placeholder="شرح موجز للعملية المالية..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </DocumentField>
-
-          <DocumentReadGrid columns={1}>
-            <DocumentReadField
-              label="المصدر"
-              value="GL — يُعيَّن تلقائياً من الخادم"
-            />
-          </DocumentReadGrid>
-
-          <p className="rounded-control border border-line-soft bg-surface-muted px-3 py-2 text-[11px] leading-relaxed text-ink-muted">
-            رقم القيد يُولَّد تلقائياً من الخادم عند الحفظ، ولا يُحرَّر يدوياً.
-          </p>
-        </div>
-      </Card>
-    );
-
-    const summaryCard = (
-      <DocumentSummaryCard
-        title="ملخص القيد"
-        rows={summaryRows}
-        totalLabel="إجمالي القيد"
-        totalValue={money(displayTotalDebit)}
-        footer={
-          <div className="flex items-center justify-between text-[11px] text-ink-muted">
-            <span>حالة التوازن</span>
-            <span
-              className={`inline-flex items-center gap-1 font-bold ${
-                displayBalanced ? 'text-state-success' : 'text-state-danger'
-              }`}
-            >
-              {displayBalanced ? (
-                <CheckCircle2 size={12} />
-              ) : (
-                <AlertTriangle size={12} />
-              )}
-              {displayBalanced ? 'القيد متوازن' : 'القيد غير متوازن'}
-            </span>
-          </div>
-        }
-      />
-    );
-
-    const auditCard = isView ? (
-      <DocumentAuditCard
-        createdByName={selectedEntry?.createdByName ?? null}
-        updatedByName={null}
-        createdAt={selectedEntry?.created_at ?? null}
-        updatedAt={selectedEntry?.updated_at ?? null}
-        createdDevice={null}
-        updatedDevice={null}
-        sourceNote="المصدر: created_by و created_at / updated_at من قيد اليومية. لا يوجد عمود مخصّص لمعدّل السجل على جداول القيود، لذلك تظهر «معدّل السجل» و «الجهاز» كـ «غير متوفر» إن لم تكن متاحة."
-      />
-    ) : null;
-
-    const linesCard = isView ? (
-      <Card
-        flush
-        title="سطور القيد"
-        description={`${detailLines.length} سطر — بيانات محفوظة للقراءة فقط`}
-      >
-        <DocumentTableShell minWidth={920}>
-          <table className="w-full text-right text-xs">
-            <thead className="border-b border-line bg-surface-muted font-bold text-ink-muted">
-              <tr>
-                <th className="w-10 px-3 py-3">#</th>
-                <th className="px-3 py-3">كود الحساب</th>
-                <th className="px-3 py-3">اسم الحساب</th>
-                <th className="px-3 py-3">مركز التكلفة</th>
-                <th className="px-3 py-3">بيان السطر</th>
-                <th className="px-3 py-3 text-end">مدين</th>
-                <th className="px-3 py-3 text-end">دائن</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line-soft text-ink">
-              {detailLines.map((line, idx) => (
-                <tr
-                  key={line.id || idx}
-                  className="transition-colors hover:bg-surface-hover/60"
-                >
-                  <td className="px-3 py-2.5 font-mono text-ink-muted">{idx + 1}</td>
-                  <td className="px-3 py-2.5 font-mono font-bold text-brand">
-                    {line.accountCode || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 font-semibold text-ink">
-                    {line.accountName || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-ink-muted">
-                    {line.costCenterName ? (
-                      <span className="inline-flex items-center gap-1 rounded bg-surface-muted px-1.5 py-0.5 text-[11px] text-ink">
-                        <span className="font-mono text-brand font-bold">{line.costCenterCode}</span>
-                        <span>{line.costCenterName}</span>
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 text-ink-muted">
-                    {line.description || '—'}
-                  </td>
-                  <td className="kayan-numeric px-3 py-2.5 text-end font-bold">
-                    {Number(line.debit) > 0 ? money(line.debit) : '—'}
-                  </td>
-                  <td className="kayan-numeric px-3 py-2.5 text-end font-bold">
-                    {Number(line.credit) > 0 ? money(line.credit) : '—'}
-                  </td>
-                </tr>
-              ))}
-              {detailLines.length === 0 && (
-                <tr>
-                  <td colSpan={7}>
-                    <EmptyState
-                      icon={<FileSpreadsheet size={30} />}
-                      title="لا توجد سطور محفوظة"
-                      description="لم تُسجَّل سطور على هذا القيد."
-                    />
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            <tfoot className="border-t border-line bg-surface-muted font-bold text-ink">
-              <tr>
-                <td colSpan={5} className="px-3 py-2.5">
-                  المجموع:
-                </td>
-                <td className="kayan-numeric px-3 py-2.5 text-end text-brand">
-                  {money(detailTotalDebit)}
-                </td>
-                <td className="kayan-numeric px-3 py-2.5 text-end text-brand">
-                  {money(detailTotalCredit)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </DocumentTableShell>
-
-        <div
-          className={`flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 text-xs font-bold ${
-            detailBalanced
-              ? 'border-state-success/30 bg-state-success-soft text-state-success'
-              : 'border-state-danger/30 bg-state-danger-soft text-state-danger'
-          }`}
-        >
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span>
-              المدين: <span className="kayan-numeric">{money(detailTotalDebit)}</span>
-            </span>
-            <span>
-              الدائن: <span className="kayan-numeric">{money(detailTotalCredit)}</span>
-            </span>
-            <span>
-              الفارق: <span className="kayan-numeric">{money(detailDifference)}</span>
-            </span>
-          </div>
-          <span className="inline-flex items-center gap-1">
-            {detailBalanced ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-            {detailBalanced ? 'القيد متوازن' : 'القيد غير متوازن'}
-          </span>
-        </div>
-      </Card>
-    ) : (
-      <Card
-        flush
-        title="سطور القيد المحاسبي"
-        description={`${lines.length} سطر — أضف أطراف المعاملة ثم احفظ القيد المتوازن`}
-        actions={
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Scale size={14} />}
-              onClick={handleAutoBalance}
-              title="موازنة القيد آلياً وحساب الفارق (F9)"
-            >
-              موازنة القيد (F9)
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              icon={<Plus size={14} />}
-              onClick={addLine}
-              title="إضافة طرف جديد (F2)"
-            >
-              إضافة طرف (F2)
-            </Button>
-          </div>
-        }
-      >
-        {/* شريط تلميحات لوحة المفاتيح للمحاسب */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-soft bg-surface-muted/60 px-4 py-2 text-[11px] text-ink-muted">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="inline-flex items-center gap-1 font-semibold text-ink">
-              <Keyboard size={13} className="text-brand" />
-              إدخال سريع بلوحة المفاتيح:
-            </span>
-            <span className="hidden sm:inline">
-              <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">Enter</kbd> انتقال للخلايا والسطر التالي
-            </span>
-            <span>
-              <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F9</kbd> موازنة القيد
-            </span>
-            <span>
-              <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F4</kbd> بحث الدليل الشامل
-            </span>
-            <span>
-              <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F2</kbd> سطر جديد
-            </span>
-          </div>
-          <span className="text-[10px] font-semibold text-ink-muted">الريال اليمني (YER)</span>
-        </div>
-
-        <DocumentTableShell minWidth={950}>
-          <table className="w-full text-right text-xs">
-            <thead className="border-b border-line bg-surface-muted font-bold text-ink-muted">
-              <tr>
-                <th className="w-10 px-3 py-3">#</th>
-                <th className="min-w-[260px] px-3 py-3">الحساب المحاسبي</th>
-                <th className="w-44 px-3 py-3">مركز التكلفة</th>
-                <th className="min-w-[200px] px-3 py-3">البيان الفرعي</th>
-                <th className="w-32 px-3 py-3 text-end">مدين (ر.ي)</th>
-                <th className="w-32 px-3 py-3 text-end">دائن (ر.ي)</th>
-                <th className="w-12 px-2 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line-soft">
-              {lines.map((line, idx) => (
-                <tr key={idx} className="transition-colors hover:bg-surface-hover/50">
-                  <td className="px-3 py-2 font-mono text-ink-muted">{idx + 1}</td>
-                  <td className="px-2 py-2">
-                    <AccountAutocomplete
-                      accounts={accounts}
-                      value={line.accountId}
-                      inputRef={{
-                        get current() {
-                          return lineRefs.current[idx]?.account || null;
-                        },
-                        set current(el) {
-                          if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
-                          lineRefs.current[idx].account = el;
-                        }
-                      }}
-                      onChange={(accId, acc) => {
-                        updateLine(idx, 'accountId', accId);
-                        if (acc) {
-                          focusCell(idx, 'costCenter');
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          focusCell(idx, 'costCenter');
-                        }
-                      }}
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    <select
-                      ref={(el) => {
-                        if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
-                        lineRefs.current[idx].costCenter = el;
-                      }}
-                      value={line.costCenterId || ''}
-                      onChange={(e) => updateLine(idx, 'costCenterId', e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          focusCell(idx, 'desc');
-                        }
-                      }}
-                      className="h-8 w-full rounded-control border border-line bg-surface px-2 text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                    >
-                      <option value="">-- بدون مركز --</option>
-                      {costCenters.map((cc) => (
-                        <option key={cc.id} value={cc.id}>
-                          {cc.code} - {cc.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      ref={(el) => {
-                        if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
-                        lineRefs.current[idx].desc = el;
-                      }}
-                      type="text"
-                      placeholder="بيان فرعي (اختياري)"
-                      value={line.description}
-                      onChange={(e) => updateLine(idx, 'description', e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          focusCell(idx, 'debit');
-                        }
-                      }}
-                      className="h-8 w-full rounded-control border border-line bg-surface px-2.5 text-xs text-ink transition-colors placeholder:text-ink-muted/60 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      ref={(el) => {
-                        if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
-                        lineRefs.current[idx].debit = el;
-                      }}
-                      type="number"
-                      min="0"
-                      step="any"
-                      placeholder="0"
-                      value={line.debit || ''}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value) || 0;
-                        updateLine(idx, 'debit', val);
-                        if (val > 0 && line.credit) {
-                          updateLine(idx, 'credit', 0);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const val = parseFloat(line.debit as any) || 0;
-                          if (val > 0) {
-                            updateLine(idx, 'credit', 0);
-                            if (idx === lines.length - 1) {
-                              const curDebit = lines.reduce((s, l, i) => s + (i === idx ? val : (parseFloat(l.debit as any) || 0)), 0);
-                              const curCredit = lines.reduce((s, l, i) => s + (i === idx ? 0 : (parseFloat(l.credit as any) || 0)), 0);
-                              const diff = curDebit - curCredit;
-                              const nextCredit = diff > 0 ? diff : 0;
-                              setLines(prev => [...prev, { accountId: '', costCenterId: '', debit: 0, credit: nextCredit, description: line.description || description }]);
-                              focusCell(idx + 1, 'account');
-                            } else {
-                              focusCell(idx + 1, 'account');
-                            }
-                          } else {
-                            focusCell(idx, 'credit');
-                          }
-                        }
-                      }}
-                      className="h-8 w-full rounded-control border border-line bg-surface px-2.5 text-end font-mono font-bold text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      ref={(el) => {
-                        if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
-                        lineRefs.current[idx].credit = el;
-                      }}
-                      type="number"
-                      min="0"
-                      step="any"
-                      placeholder="0"
-                      value={line.credit || ''}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value) || 0;
-                        updateLine(idx, 'credit', val);
-                        if (val > 0 && line.debit) {
-                          updateLine(idx, 'debit', 0);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const val = parseFloat(line.credit as any) || 0;
-                          if (val > 0) {
-                            updateLine(idx, 'debit', 0);
-                            if (idx === lines.length - 1) {
-                              const curDebit = lines.reduce((s, l, i) => s + (i === idx ? 0 : (parseFloat(l.debit as any) || 0)), 0);
-                              const curCredit = lines.reduce((s, l, i) => s + (i === idx ? val : (parseFloat(l.credit as any) || 0)), 0);
-                              const diff = curCredit - curDebit;
-                              if (diff > 0.001) {
-                                setLines(prev => [...prev, { accountId: '', costCenterId: '', debit: diff, credit: 0, description: line.description || description }]);
-                                focusCell(idx + 1, 'account');
-                              }
-                            } else {
-                              focusCell(idx + 1, 'account');
-                            }
-                          } else {
-                            if (idx < lines.length - 1) {
-                              focusCell(idx + 1, 'account');
-                            }
-                          }
-                        }
-                      }}
-                      className="h-8 w-full rounded-control border border-line bg-surface px-2.5 text-end font-mono font-bold text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                    />
-                  </td>
-                  <td className="px-2 py-2 text-center">
-                    {lines.length > 2 && (
-                      <IconButton
-                        tone="danger"
-                        label="حذف السطر"
-                        onClick={() => removeLine(idx)}
-                      >
-                        <Trash2 size={14} />
-                      </IconButton>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot className="border-t border-line bg-surface-muted font-bold text-ink">
-              <tr>
-                <td colSpan={4} className="px-3 py-2.5">
-                  الإجمالي
-                </td>
-                <td className="kayan-numeric px-3 py-2.5 text-end text-brand">
-                  {money(totalDebit)}
-                </td>
-                <td className="kayan-numeric px-3 py-2.5 text-end text-brand">
-                  {money(totalCredit)}
-                </td>
-                <td />
-              </tr>
-            </tfoot>
-          </table>
-        </DocumentTableShell>
-
-        <div
-          className={`flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 text-xs font-bold ${
-            isBalanced
-              ? 'border-state-success/30 bg-state-success-soft text-state-success'
-              : 'border-state-danger/30 bg-state-danger-soft text-state-danger'
-          }`}
-        >
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span>
-              المدين: <span className="kayan-numeric">{money(totalDebit)}</span>
-            </span>
-            <span>
-              الدائن: <span className="kayan-numeric">{money(totalCredit)}</span>
-            </span>
-            <span>
-              الفارق: <span className="kayan-numeric">{money(difference)}</span>
-            </span>
-          </div>
-          <span className="inline-flex items-center gap-1">
-            {isBalanced ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-            {isBalanced ? 'القيد متوازن' : 'القيد غير متوازن'}
-          </span>
-        </div>
-      </Card>
-    );
 
     const extraActions = isView ? (
       <>
@@ -1186,25 +758,80 @@ export const JournalEntriesPage: React.FC = () => {
     ) : undefined;
 
     return (
-      <DocumentWorkspace
-        title={documentTitle}
-        description={documentDescription}
-        icon={<FileSpreadsheet size={20} />}
-        badge={badge}
-        breadcrumbs={[
-          { label: 'الرئيسية', href: '/' },
-          { label: 'القيود المحاسبية', href: '/accounting/journal-entries' },
-          { label: isCreate ? 'جديد' : selectedEntry?.entry_number || 'مستند' },
-        ]}
-        notice={
-          formError ? (
-            <div className="flex items-start gap-2 rounded-card border border-state-danger/30 bg-state-danger-soft px-4 py-3 text-xs font-bold text-state-danger">
-              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              <span>{formError}</span>
+      <div className="space-y-4 pb-10" dir="rtl">
+        {/* Print-only document */}
+        {isView && selectedEntry && (
+          <div className="hidden print:block" data-document-print>
+            <JournalEntryPrint entry={selectedEntry} company={company} />
+          </div>
+        )}
+
+        {/* Workspace Top Header & Action Bar (hidden on print) */}
+        <div className="print:hidden space-y-4">
+          {/* Breadcrumbs + Title + Live Balance Status */}
+          <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-4 shadow-k-xs sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <button
+                type="button"
+                onClick={handleExit}
+                className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-muted text-ink-muted transition hover:bg-surface-hover hover:text-ink"
+                title="العودة إلى سجل القيود"
+              >
+                <ChevronLeft size={18} className="rotate-180" />
+              </button>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-lg font-black text-ink">{documentTitle}</h1>
+                  {badge}
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
+                      displayBalanced
+                        ? 'border-state-success/30 bg-state-success-soft text-state-success'
+                        : 'border-state-danger/30 bg-state-danger-soft text-state-danger'
+                    }`}
+                  >
+                    {displayBalanced ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                    {displayBalanced ? 'متوازن 100%' : `غير متوازن (فارق: ${money(displayDifference)})`}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-ink-muted">
+                  {isCreate
+                    ? 'أدخل التاريخ والبيان ثم اختر الحسابات والمبالغ. القيد يحفظ فور تساوي المدين والدائن.'
+                    : `التاريخ: ${dateOnly(selectedEntry?.entry_date)} • المصدر: ${selectedEntry?.source_id || '—'}`}
+                </p>
+              </div>
             </div>
-          ) : undefined
-        }
-        actionBar={
+
+            {/* Live Totals Pill */}
+            <div className="flex items-center gap-4 rounded-xl border border-line bg-surface-muted/70 px-4 py-2 text-xs">
+              <div>
+                <span className="block text-[10px] font-semibold text-ink-muted">إجمالي المدين</span>
+                <span className="kayan-numeric font-mono text-sm font-black text-blue-700">
+                  {money(displayTotalDebit)}
+                </span>
+              </div>
+              <div className="h-7 w-px bg-line" />
+              <div>
+                <span className="block text-[10px] font-semibold text-ink-muted">إجمالي الدائن</span>
+                <span className="kayan-numeric font-mono text-sm font-black text-emerald-700">
+                  {money(displayTotalCredit)}
+                </span>
+              </div>
+              <div className="h-7 w-px bg-line" />
+              <div>
+                <span className="block text-[10px] font-semibold text-ink-muted">الفارق</span>
+                <span
+                  className={`kayan-numeric font-mono text-sm font-black ${
+                    displayBalanced ? 'text-emerald-600' : 'text-rose-600'
+                  }`}
+                >
+                  {money(displayDifference)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Standard Document Action Bar */}
           <DocumentActionBar
             mode={workspaceMode}
             status={actionBarStatus}
@@ -1219,57 +846,628 @@ export const JournalEntriesPage: React.FC = () => {
             editReason={
               isCreate
                 ? 'لا يمكن تعديل قيد قبل حفظه. احفظ القيد ثم افتحه من قائمة القيود.'
-                : 'لا يوجد مسار تحديث للقيد المحاسبي في النظام الحالي؛ تُصحح القيود المرحلة بالعكس.'
+                : 'تُصحح القيود المرحلة عبر إنشاء قيد عكسي للحفاظ على سلامة التدقيق.'
             }
             canSave={isCreate ? canSaveEntry : false}
             saveReason={
               isCreate
-                ? createSaveReason ||
-                  'لا توجد تغييرات قابلة للحفظ في هذه الحالة.'
+                ? createSaveReason || 'جاهز للحفظ'
                 : 'وضع العرض للقراءة فقط؛ الحفظ متاح عند إنشاء قيد جديد.'
             }
             canPrint={isView}
             printReason="احفظ القيد أولاً ثم اطبع النسخة المحفوظة."
             canArchive={false}
-            archiveReason="الأرشفة غير مدعومة لسجلات القيود المحاسبية في النظام الحالي."
+            archiveReason="الأرشفة غير مدعومة لسجلات القيود المحاسبية."
             extraActions={extraActions}
           />
-        }
-        sidebar={
-          <>
-            {infoCard}
-            {summaryCard}
-            {auditCard}
-          </>
-        }
-        printContent={
-          isView && selectedEntry ? (
-            <JournalEntryPrint entry={selectedEntry} company={company} />
-          ) : undefined
-        }
-      >
-        {linesCard}
-      </DocumentWorkspace>
+
+          {/* Error Notice */}
+          {formError && (
+            <div className="flex items-start gap-2 rounded-xl border border-state-danger/30 bg-state-danger-soft px-4 py-3 text-xs font-bold text-state-danger">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
+
+          {/* Voucher Header Card — Full Width 12-Col Grid */}
+          <Card
+            title="بيانات رأس القيد"
+            description={isCreate ? 'المعلومات الأساسية للسند المحاسبي' : 'بيانات القيد المحفوظة (للقراءة فقط)'}
+          >
+            {isView ? (
+              <DocumentReadGrid columns={4}>
+                <DocumentReadField label="رقم القيد" value={selectedEntry?.entry_number} numeric />
+                <DocumentReadField label="تاريخ القيد" value={dateOnly(selectedEntry?.entry_date)} numeric />
+                <DocumentReadField label="المصدر" value={selectedEntry?.source_id || '—'} />
+                <DocumentReadField
+                  label="الحالة"
+                  value={status ? <EntryStatusBadge status={status} size="sm" /> : '—'}
+                />
+                <DocumentReadField
+                  label="البيان العام للقيد"
+                  className="sm:col-span-4"
+                  value={selectedEntry?.description}
+                />
+              </DocumentReadGrid>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+                <div className="md:col-span-2">
+                  <DocumentField label="رقم القيد">
+                    <div className="flex h-9 items-center rounded-control border border-line bg-surface-muted px-3 font-mono text-xs font-bold text-ink-muted">
+                      تلقائي عند الحفظ
+                    </div>
+                  </DocumentField>
+                </div>
+
+                <div className="md:col-span-3">
+                  <DocumentField label="تاريخ القيد" required>
+                    <DatePicker
+                      value={entryDate}
+                      onChange={(e) => setEntryDate(e.target.value)}
+                    />
+                  </DocumentField>
+                </div>
+
+                <div className="md:col-span-2">
+                  <DocumentField label="المصدر">
+                    <div className="flex h-9 items-center rounded-control border border-line bg-surface-muted px-3 font-mono text-xs font-bold text-ink-muted">
+                      GL (يدوي)
+                    </div>
+                  </DocumentField>
+                </div>
+
+                <div className="md:col-span-5">
+                  <DocumentField label="البيان العام للقيد" required>
+                    <Input
+                      type="text"
+                      placeholder="اكتب شرحاً واضحاً للعملية المحاسبية..."
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                    />
+                  </DocumentField>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* Full-Width Accounting Grid */}
+          {isView ? (
+            <Card
+              flush
+              title="جدول أطراف القيد المحاسبي"
+              description={`${detailLines.length} سطر مسجّل`}
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead className="border-b border-line bg-surface-muted font-bold text-ink-muted">
+                    <tr>
+                      <th className="w-12 px-4 py-3 text-center">#</th>
+                      <th className="w-32 px-3 py-3">كود الحساب</th>
+                      <th className="px-3 py-3">اسم الحساب</th>
+                      <th className="w-48 px-3 py-3">مركز التكلفة</th>
+                      <th className="px-3 py-3">بيان السطر</th>
+                      <th className="w-36 bg-blue-50/60 px-4 py-3 text-end text-blue-800">مدين (ر.ي)</th>
+                      <th className="w-36 bg-emerald-50/60 px-4 py-3 text-end text-emerald-800">دائن (ر.ي)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line-soft text-ink">
+                    {detailLines.map((line, idx) => (
+                      <tr key={line.id || idx} className="transition-colors hover:bg-surface-hover/50">
+                        <td className="px-4 py-3 text-center font-mono text-ink-muted">{idx + 1}</td>
+                        <td className="px-3 py-3 font-mono font-bold text-brand">
+                          {line.accountCode || '—'}
+                        </td>
+                        <td className="px-3 py-3 font-semibold text-ink">
+                          {line.accountName || '—'}
+                        </td>
+                        <td className="px-3 py-3 text-ink-muted">
+                          {line.costCenterName ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-line bg-surface-muted px-2 py-0.5 text-[11px] text-ink">
+                              <span className="font-mono font-bold text-brand">{line.costCenterCode}</span>
+                              <span>{line.costCenterName}</span>
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-ink-muted">{line.description || '—'}</td>
+                        <td className="kayan-numeric bg-blue-50/20 px-4 py-3 text-end font-mono font-bold text-blue-800">
+                          {Number(line.debit) > 0 ? money(line.debit) : '—'}
+                        </td>
+                        <td className="kayan-numeric bg-emerald-50/20 px-4 py-3 text-end font-mono font-bold text-emerald-800">
+                          {Number(line.credit) > 0 ? money(line.credit) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                    {detailLines.length === 0 && (
+                      <tr>
+                        <td colSpan={7}>
+                          <EmptyState
+                            icon={<FileSpreadsheet size={30} />}
+                            title="لا توجد سطور محفوظة"
+                            description="لم تُسجَّل سطور على هذا القيد."
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  <tfoot className="border-t-2 border-line bg-surface-muted font-bold text-ink">
+                    <tr>
+                      <td colSpan={5} className="px-4 py-3 text-left">
+                        الإجمالي العام للقيد:
+                      </td>
+                      <td className="kayan-numeric bg-blue-50/50 px-4 py-3 text-end font-mono text-sm font-black text-blue-800">
+                        {money(detailTotalDebit)}
+                      </td>
+                      <td className="kayan-numeric bg-emerald-50/50 px-4 py-3 text-end font-mono text-sm font-black text-emerald-800">
+                        {money(detailTotalCredit)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </Card>
+          ) : (
+            <Card
+              flush
+              title="جدول أطراف القيد المحاسبي"
+              description={`${lines.length} سطور — تنقّل بسرعة عبر لوحة المفاتيح`}
+              actions={
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<Scale size={14} />}
+                    onClick={handleAutoBalance}
+                    title="موازنة القيد آلياً وحساب الفارق (F9)"
+                  >
+                    موازنة القيد (F9)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={<Plus size={14} />}
+                    onClick={addLine}
+                    title="إضافة سطر جديد (F2)"
+                  >
+                    إضافة سطر (F2)
+                  </Button>
+                </div>
+              }
+            >
+              {/* Keyboard Shortcuts Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-soft bg-surface-muted/60 px-4 py-2 text-[11px] text-ink-muted">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="inline-flex items-center gap-1 font-bold text-ink">
+                    <Keyboard size={13} className="text-brand" />
+                    اختصارات المحاسب:
+                  </span>
+                  <span>
+                    <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">Enter</kbd> انتقال للخلية التالية
+                  </span>
+                  <span>
+                    <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F4</kbd> فتح دليل الحسابات
+                  </span>
+                  <span>
+                    <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F9</kbd> موازنة تلقائية
+                  </span>
+                  <span>
+                    <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px]">F2</kbd> سطر جديد
+                  </span>
+                </div>
+                <span className="font-mono text-[10px] font-bold text-ink-muted">العملة: YER</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead className="border-b border-line bg-surface-muted font-bold text-ink-muted">
+                    <tr>
+                      <th className="w-9 px-2 py-3 text-center">#</th>
+                      <th className="min-w-[190px] px-2 py-3">الحساب الرئيسي</th>
+                      <th className="min-w-[210px] px-2 py-3">الحساب التحليلي (الفرعي)</th>
+                      <th className="w-36 px-2 py-3">مركز التكلفة</th>
+                      <th className="min-w-[140px] px-2 py-3">بيان السطر</th>
+                      <th className="w-28 bg-blue-50/60 px-2 py-3 text-end text-blue-800">مدين (ر.ي)</th>
+                      <th className="w-28 bg-emerald-50/60 px-2 py-3 text-end text-emerald-800">دائن (ر.ي)</th>
+                      <th className="w-10 px-1 py-3 text-center" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line-soft">
+                    {lines.map((line, idx) => {
+                      const ctx = getAnalyticalContext(line.mainAccountId);
+                      return (
+                      <tr key={idx} className="transition-colors hover:bg-surface-hover/40">
+                        <td className="px-2 py-2 text-center font-mono font-semibold text-ink-muted">
+                          {idx + 1}
+                        </td>
+                        <td className="px-1.5 py-2">
+                          <select
+                            value={line.mainAccountId || ''}
+                            onChange={(e) => {
+                              const mId = e.target.value;
+                              const nextCtx = getAnalyticalContext(mId);
+                              if (!mId) {
+                                patchLine(idx, { mainAccountId: '', analyticalId: '', accountId: '' });
+                              } else if (nextCtx.kind === 'LEAF_SELF' && nextCtx.mainAcc) {
+                                patchLine(idx, {
+                                  mainAccountId: mId,
+                                  analyticalId: nextCtx.mainAcc.id,
+                                  accountId: nextCtx.mainAcc.id,
+                                });
+                              } else {
+                                patchLine(idx, {
+                                  mainAccountId: mId,
+                                  analyticalId: '',
+                                  accountId: '',
+                                });
+                              }
+                            }}
+                            className="h-9 w-full rounded-control border border-line bg-surface px-2 text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                          >
+                            <option value="">-- بحث حر في الدليل --</option>
+                            {mainAccounts.map((acc) => (
+                              <option key={acc.id} value={acc.id}>
+                                {acc.code} - {acc.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-1.5 py-2">
+                          {ctx.kind === 'CUSTOMERS' ? (
+                            <select
+                              value={line.analyticalId || ''}
+                              onChange={(e) => {
+                                const custId = e.target.value;
+                                const cust = customers.find((c) => c.id === custId);
+                                if (cust) {
+                                  const targetAccId = cust.receivables_account_id || ctx.mainAcc?.id || '';
+                                  patchLine(idx, {
+                                    analyticalId: cust.id,
+                                    accountId: targetAccId,
+                                    description: line.description || `عميل: ${cust.name}`,
+                                  });
+                                  focusCell(idx, 'costCenter');
+                                } else {
+                                  patchLine(idx, { analyticalId: '', accountId: '' });
+                                }
+                              }}
+                              className="h-9 w-full rounded-control border border-blue-300 bg-blue-50/30 px-2 text-xs font-semibold text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                            >
+                              <option value="">-- اختر العميل ({customers.length}) --</option>
+                              {customers.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.code} - {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : ctx.kind === 'SUPPLIERS' ? (
+                            <select
+                              value={line.analyticalId || ''}
+                              onChange={(e) => {
+                                const suppId = e.target.value;
+                                const supp = suppliers.find((s) => s.id === suppId);
+                                if (supp) {
+                                  const targetAccId = supp.payables_account_id || ctx.mainAcc?.id || '';
+                                  patchLine(idx, {
+                                    analyticalId: supp.id,
+                                    accountId: targetAccId,
+                                    description: line.description || `مورد: ${supp.name}`,
+                                  });
+                                  focusCell(idx, 'costCenter');
+                                } else {
+                                  patchLine(idx, { analyticalId: '', accountId: '' });
+                                }
+                              }}
+                              className="h-9 w-full rounded-control border border-amber-300 bg-amber-50/30 px-2 text-xs font-semibold text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                            >
+                              <option value="">-- اختر المورد ({suppliers.length}) --</option>
+                              {suppliers.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.code} - {s.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : ctx.kind === 'SUB_ACCOUNTS' || ctx.kind === 'LEAF_SELF' ? (
+                            <select
+                              value={line.accountId || ''}
+                              onChange={(e) => {
+                                const accId = e.target.value;
+                                patchLine(idx, { analyticalId: accId, accountId: accId });
+                                if (accId) focusCell(idx, 'costCenter');
+                              }}
+                              className="h-9 w-full rounded-control border border-line bg-surface px-2 text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                            >
+                              <option value="">-- اختر الحساب التحليلي ({ctx.options.length}) --</option>
+                              {ctx.options.map((a) => (
+                                <option key={a.id} value={a.id}>
+                                  {a.code} - {a.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <AccountAutocomplete
+                              accounts={accounts}
+                              value={line.accountId}
+                              inputRef={{
+                                get current() {
+                                  return lineRefs.current[idx]?.account || null;
+                                },
+                                set current(el) {
+                                  if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                                  lineRefs.current[idx].account = el;
+                                },
+                              }}
+                              onChange={(accId, acc) => {
+                                updateLine(idx, 'accountId', accId);
+                                if (acc) {
+                                  focusCell(idx, 'costCenter');
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  focusCell(idx, 'costCenter');
+                                }
+                              }}
+                            />
+                          )}
+                        </td>
+                        <td className="px-2 py-2">
+                          <select
+                            ref={(el) => {
+                              if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                              lineRefs.current[idx].costCenter = el;
+                            }}
+                            value={line.costCenterId || ''}
+                            onChange={(e) => updateLine(idx, 'costCenterId', e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                focusCell(idx, 'desc');
+                              }
+                            }}
+                            className="h-9 w-full rounded-control border border-line bg-surface px-2.5 text-xs text-ink transition-colors focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                          >
+                            <option value="">-- بدون مركز --</option>
+                            {costCenters.map((cc) => (
+                              <option key={cc.id} value={cc.id}>
+                                {cc.code} - {cc.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            ref={(el) => {
+                              if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                              lineRefs.current[idx].desc = el;
+                            }}
+                            type="text"
+                            placeholder="بيان فرعي (اختياري)"
+                            value={line.description}
+                            onChange={(e) => updateLine(idx, 'description', e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                focusCell(idx, 'debit');
+                              }
+                            }}
+                            className="h-9 w-full rounded-control border border-line bg-surface px-3 text-xs text-ink transition-colors placeholder:text-ink-muted/60 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                          />
+                        </td>
+                        <td className="bg-blue-50/15 px-2 py-2">
+                          <input
+                            ref={(el) => {
+                              if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                              lineRefs.current[idx].debit = el;
+                            }}
+                            type="number"
+                            min="0"
+                            step="any"
+                            placeholder="0"
+                            value={line.debit || ''}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              updateLine(idx, 'debit', val);
+                              if (val > 0 && line.credit) {
+                                updateLine(idx, 'credit', 0);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const val = parseFloat(line.debit as any) || 0;
+                                if (val > 0) {
+                                  updateLine(idx, 'credit', 0);
+                                  if (idx === lines.length - 1) {
+                                    const curDebit = lines.reduce((s, l, i) => s + (i === idx ? val : (parseFloat(l.debit as any) || 0)), 0);
+                                    const curCredit = lines.reduce((s, l, i) => s + (i === idx ? 0 : (parseFloat(l.credit as any) || 0)), 0);
+                                    const diff = curDebit - curCredit;
+                                    const nextCredit = diff > 0 ? diff : 0;
+                                    setLines((prev) => [
+                                      ...prev,
+                                      { accountId: '', costCenterId: '', debit: 0, credit: nextCredit, description: line.description || description },
+                                    ]);
+                                    focusCell(idx + 1, 'account');
+                                  } else {
+                                    focusCell(idx + 1, 'account');
+                                  }
+                                } else {
+                                  focusCell(idx, 'credit');
+                                }
+                              }
+                            }}
+                            className="h-9 w-full rounded-control border border-line bg-surface px-2.5 text-end font-mono text-xs font-bold text-blue-800 transition-colors focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </td>
+                        <td className="bg-emerald-50/15 px-2 py-2">
+                          <input
+                            ref={(el) => {
+                              if (!lineRefs.current[idx]) lineRefs.current[idx] = {} as any;
+                              lineRefs.current[idx].credit = el;
+                            }}
+                            type="number"
+                            min="0"
+                            step="any"
+                            placeholder="0"
+                            value={line.credit || ''}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              updateLine(idx, 'credit', val);
+                              if (val > 0 && line.debit) {
+                                updateLine(idx, 'debit', 0);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const val = parseFloat(line.credit as any) || 0;
+                                if (val > 0) {
+                                  updateLine(idx, 'debit', 0);
+                                  if (idx === lines.length - 1) {
+                                    const curDebit = lines.reduce((s, l, i) => s + (i === idx ? 0 : (parseFloat(l.debit as any) || 0)), 0);
+                                    const curCredit = lines.reduce((s, l, i) => s + (i === idx ? val : (parseFloat(l.credit as any) || 0)), 0);
+                                    const diff = curCredit - curDebit;
+                                    if (diff > 0.001) {
+                                      setLines((prev) => [
+                                        ...prev,
+                                        { accountId: '', costCenterId: '', debit: diff, credit: 0, description: line.description || description },
+                                      ]);
+                                      focusCell(idx + 1, 'account');
+                                    }
+                                  } else {
+                                    focusCell(idx + 1, 'account');
+                                  }
+                                } else if (idx < lines.length - 1) {
+                                  focusCell(idx + 1, 'account');
+                                }
+                              }
+                            }}
+                            className="h-9 w-full rounded-control border border-line bg-surface px-2.5 text-end font-mono text-xs font-bold text-emerald-800 transition-colors focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          {lines.length > 2 && (
+                            <IconButton
+                              tone="danger"
+                              label="حذف السطر"
+                              onClick={() => removeLine(idx)}
+                            >
+                              <Trash2 size={14} />
+                            </IconButton>
+                          )}
+                        </td>
+                      </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="border-t-2 border-line bg-surface-muted font-bold text-ink">
+                    <tr>
+                      <td colSpan={5} className="px-4 py-3 text-left">
+                        الإجمالي العام للقيد:
+                      </td>
+                      <td className="kayan-numeric bg-blue-50/50 px-3 py-3 text-end font-mono text-sm font-black text-blue-800">
+                        {money(totalDebit)}
+                      </td>
+                      <td className="kayan-numeric bg-emerald-50/50 px-3 py-3 text-end font-mono text-sm font-black text-emerald-800">
+                        {money(totalCredit)}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Balance Status Bar */}
+              <div
+                className={`flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-xs font-bold ${
+                  isBalanced
+                    ? 'border-state-success/30 bg-state-success-soft text-state-success'
+                    : 'border-state-danger/30 bg-state-danger-soft text-state-danger'
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-4">
+                  <span>
+                    المدين: <span className="kayan-numeric font-mono">{money(totalDebit)} ر.ي</span>
+                  </span>
+                  <span>
+                    الدائن: <span className="kayan-numeric font-mono">{money(totalCredit)} ر.ي</span>
+                  </span>
+                  <span>
+                    الفارق: <span className="kayan-numeric font-mono">{money(difference)} ر.ي</span>
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!isBalanced && totalDebit !== totalCredit && (
+                    <button
+                      type="button"
+                      onClick={handleAutoBalance}
+                      className="rounded-lg bg-white/80 px-2.5 py-1 text-[11px] font-bold text-ink shadow-xs hover:bg-white"
+                    >
+                      موازنة الآن (F9)
+                    </button>
+                  )}
+                  <span className="inline-flex items-center gap-1">
+                    {isBalanced ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                    {isBalanced ? 'القيد متوازن وجاهز للحفظ' : 'يجب توازن القيد قبل الحفظ'}
+                  </span>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Bottom Summary & Audit Strip (View Mode) */}
+          {isView && selectedEntry && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <DocumentSummaryCard
+                title="ملخص التوازن المالي"
+                rows={summaryRows}
+                totalLabel="إجمالي القيد"
+                totalValue={`${money(displayTotalDebit)} ر.ي`}
+              />
+              <DocumentAuditCard
+                createdByName={selectedEntry.createdByName ?? null}
+                updatedByName={null}
+                createdAt={selectedEntry.created_at ?? null}
+                updatedAt={selectedEntry.updated_at ?? null}
+                createdDevice={null}
+                updatedDevice={null}
+                sourceNote="بيانات التدقيق المرجعية لقيد اليومية في النظام المحاسبي."
+              />
+            </div>
+          )}
+        </div>
+      </div>
     );
   }
 
   /* ---------------------------------------------------------------- */
-  /* List screen                                                      */
+  /* List Screen                                                      */
   /* ---------------------------------------------------------------- */
 
   return (
-    <div className="space-y-4 pb-8">
+    <div className="space-y-4 pb-8" dir="rtl">
       <PageHeader
         title="القيود المحاسبية"
-        description="تسجيل، مراجعة، ترحيل وعكس قيود اليومية العامة والآلية"
+        description="إدارة، مراجعة، ترحيل وعكس قيود اليومية العامة والآلية"
         icon={<FileSpreadsheet size={20} />}
         actions={
-          <Button variant="primary" icon={<Plus size={16} />} onClick={openNew}>
-            قيد يومية جديد
-          </Button>
+          <div className="flex items-center gap-2">
+            <IconButton
+              label="تحديث البيانات"
+              onClick={fetchEntries}
+              className="border border-line bg-surface"
+            >
+              <RefreshCw size={15} />
+            </IconButton>
+            <Button variant="primary" icon={<Plus size={16} />} onClick={openNew}>
+              قيد يومية جديد
+            </Button>
+          </div>
         }
       />
 
+      {/* KPI Summary Cards */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="إجمالي القيود"
@@ -1305,44 +1503,113 @@ export const JournalEntriesPage: React.FC = () => {
         />
       </div>
 
-      <PageToolbar
-        search={{
-          value: search,
-          onValueChange: setSearch,
-          placeholder: 'بحث برقم القيد أو البيان...',
-        }}
-        end={
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-ink-muted">
-              إجمالي القيود:{' '}
-              <span className="kayan-numeric font-bold text-ink">
-                {entries.length}
-              </span>
-            </span>
-            <IconButton
-              label="تحديث البيانات"
-              onClick={fetchEntries}
-              className="border border-line bg-surface"
-            >
-              <RefreshCw size={15} />
-            </IconButton>
-          </div>
-        }
-      />
+      {/* Organized Search, Status Pills & Date Filter Toolbar */}
+      <div className="space-y-3 rounded-2xl border border-line bg-surface p-3.5 shadow-k-xs">
+        <PageToolbar
+          search={{
+            value: search,
+            onValueChange: setSearch,
+            placeholder: 'بحث برقم القيد أو البيان العام...',
+          }}
+          end={
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface-muted/60 px-2.5 py-1">
+                <Calendar size={13} className="text-ink-muted" />
+                <span className="text-[11px] font-semibold text-ink-muted">من:</span>
+                <input
+                  type="date"
+                  value={fromDateFilter}
+                  onChange={(e) => setFromDateFilter(e.target.value)}
+                  className="bg-transparent font-mono text-[11px] text-ink focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface-muted/60 px-2.5 py-1">
+                <Calendar size={13} className="text-ink-muted" />
+                <span className="text-[11px] font-semibold text-ink-muted">إلى:</span>
+                <input
+                  type="date"
+                  value={toDateFilter}
+                  onChange={(e) => setToDateFilter(e.target.value)}
+                  className="bg-transparent font-mono text-[11px] text-ink focus:outline-none"
+                />
+              </div>
+              {(search || statusFilter !== 'ALL' || fromDateFilter || toDateFilter) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch('');
+                    setStatusFilter('ALL');
+                    setFromDateFilter('');
+                    setToDateFilter('');
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-[11px] font-bold text-ink-muted hover:bg-surface-hover hover:text-ink"
+                >
+                  <X size={12} />
+                  مسح الفلاتر
+                </button>
+              )}
+            </div>
+          }
+        />
 
+        {/* Status Filter Pills */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line-soft pt-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="ml-1 inline-flex items-center gap-1 text-[11px] font-bold text-ink-muted">
+              <Filter size={12} />
+              الحالة:
+            </span>
+            {(
+              [
+                { key: 'ALL', label: 'الكل', count: entries.length },
+                { key: 'POSTED', label: 'مرحل', count: postedCount },
+                { key: 'DRAFT', label: 'مسودة', count: draftCount },
+                { key: 'REVERSED', label: 'معكوس', count: reversedCount },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setStatusFilter(tab.key)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                  statusFilter === tab.key
+                    ? 'bg-brand text-white shadow-xs'
+                    : 'bg-surface-muted text-ink-muted hover:bg-surface-hover hover:text-ink'
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span
+                  className={`rounded-full px-1.5 py-0.2 font-mono text-[10px] ${
+                    statusFilter === tab.key ? 'bg-white/20 text-white' : 'bg-surface text-ink-muted'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <span className="text-[11px] font-semibold text-ink-muted">
+            المعروض: <strong className="font-mono text-ink">{filteredEntries.length}</strong> من{' '}
+            <strong className="font-mono text-ink">{entries.length}</strong> قيد
+          </span>
+        </div>
+      </div>
+
+      {/* Journal Entries Table */}
       <Card flush>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1000px] text-right text-xs">
+          <table className="w-full text-right text-xs">
             <thead className="border-b border-line bg-surface-muted font-bold text-ink-muted">
               <tr>
-                <th className="px-4 py-3.5">رقم القيد</th>
-                <th className="px-4 py-3.5">التاريخ</th>
-                <th className="px-4 py-3.5">البيان</th>
-                <th className="px-4 py-3.5 text-end">إجمالي المدين</th>
-                <th className="px-4 py-3.5 text-end">إجمالي الدائن</th>
-                <th className="px-4 py-3.5 text-center">المصدر</th>
-                <th className="px-4 py-3.5 text-center">الحالة</th>
-                <th className="px-4 py-3.5 text-center">الإجراءات</th>
+                <th className="whitespace-nowrap px-3 py-3.5">رقم القيد</th>
+                <th className="whitespace-nowrap px-2.5 py-3.5">التاريخ</th>
+                <th className="px-3 py-3.5">البيان العام</th>
+                <th className="whitespace-nowrap px-3 py-3.5 text-end text-blue-800">مدين (ر.ي)</th>
+                <th className="whitespace-nowrap px-3 py-3.5 text-end text-emerald-800">دائن (ر.ي)</th>
+                <th className="whitespace-nowrap px-2.5 py-3.5 text-center">المصدر</th>
+                <th className="whitespace-nowrap px-2.5 py-3.5 text-center">الحالة</th>
+                <th className="whitespace-nowrap px-2.5 py-3.5 text-center">الإجراءات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line-soft font-medium text-ink">
@@ -1358,13 +1625,9 @@ export const JournalEntriesPage: React.FC = () => {
                     <EmptyState
                       icon={<FileSpreadsheet size={32} />}
                       title="لا توجد قيود يومية مطابقة"
-                      description="جرّب تغيير البحث، أو أنشئ قيد يومية جديداً."
+                      description="جرّب تغيير البحث أو الفلاتر، أو أنشئ قيد يومية جديداً."
                       action={
-                        <Button
-                          variant="primary"
-                          icon={<Plus size={16} />}
-                          onClick={openNew}
-                        >
+                        <Button variant="primary" icon={<Plus size={16} />} onClick={openNew}>
                           قيد يومية جديد
                         </Button>
                       }
@@ -1375,47 +1638,45 @@ export const JournalEntriesPage: React.FC = () => {
                 filteredEntries.map((entry) => (
                   <tr
                     key={entry.id}
-                    className="transition-colors hover:bg-surface-hover/60"
+                    onClick={() => viewEntryDetails(entry.id)}
+                    className="cursor-pointer transition-colors hover:bg-surface-hover/60"
                   >
-                    <td className="px-4 py-3.5">
+                    <td className="px-4 py-3">
                       <button
                         type="button"
-                        onClick={() => viewEntryDetails(entry.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          viewEntryDetails(entry.id);
+                        }}
                         className="inline-flex items-center gap-1 font-mono font-bold text-brand hover:underline"
                       >
                         <span>{entry.entry_number}</span>
-                        <ExternalLink size={12} className="opacity-60" />
+                        <ExternalLink size={11} className="opacity-60" />
                       </button>
                     </td>
-                    <td className="kayan-numeric px-4 py-3.5 text-ink-muted">
-                      {entry.entry_date ? (
-                        <bdi dir="ltr">{dateOnly(entry.entry_date)}</bdi>
-                      ) : (
-                        '—'
-                      )}
+                    <td className="kayan-numeric px-3 py-3 font-mono text-ink-muted">
+                      {entry.entry_date ? <bdi dir="ltr">{dateOnly(entry.entry_date)}</bdi> : '—'}
                     </td>
-                    <td className="max-w-sm truncate px-4 py-3.5 text-ink">
-                      {entry.description}
-                    </td>
-                    <td className="kayan-numeric px-4 py-3.5 text-end font-bold">
+                    <td className="max-w-[240px] truncate px-3 py-3 text-ink">{entry.description}</td>
+                    <td className="kayan-numeric px-4 py-3 text-end font-mono font-bold text-blue-800">
                       {money(entry.total_debit)}
                     </td>
-                    <td className="kayan-numeric px-4 py-3.5 text-end font-bold">
+                    <td className="kayan-numeric px-4 py-3 text-end font-mono font-bold text-emerald-800">
                       {money(entry.total_credit)}
                     </td>
-                    <td className="px-4 py-3.5 text-center">
+                    <td className="px-3 py-3 text-center">
                       <span className="rounded-md border border-line bg-surface-muted px-2 py-0.5 font-mono text-[10px] font-bold text-ink-muted">
                         {entry.source_id || '—'}
                       </span>
                     </td>
-                    <td className="px-4 py-3.5 text-center">
+                    <td className="px-3 py-3 text-center">
                       <EntryStatusBadge status={entry.status} size="sm" />
                     </td>
-                    <td className="px-4 py-3.5">
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-center gap-1">
                         <IconButton
                           tone="primary"
-                          label="عرض تفاصيل القيد وسطور الحسابات"
+                          label="عرض تفاصيل القيد"
                           onClick={() => viewEntryDetails(entry.id)}
                         >
                           <Eye size={15} />
@@ -1444,6 +1705,22 @@ export const JournalEntriesPage: React.FC = () => {
                 ))
               )}
             </tbody>
+            {filteredEntries.length > 0 && (
+              <tfoot className="border-t-2 border-line bg-surface-muted font-bold text-ink">
+                <tr>
+                  <td colSpan={3} className="px-4 py-3 text-left text-xs text-ink-muted">
+                    إجمالي القيود المعروضة ({filteredEntries.length}):
+                  </td>
+                  <td className="kayan-numeric px-4 py-3 text-end font-mono text-sm font-black text-blue-800">
+                    {money(filteredTotalDebit)}
+                  </td>
+                  <td className="kayan-numeric px-4 py-3 text-end font-mono text-sm font-black text-emerald-800">
+                    {money(filteredTotalCredit)}
+                  </td>
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </Card>

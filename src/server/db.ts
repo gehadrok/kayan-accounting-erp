@@ -173,6 +173,20 @@ export async function runMigrations(db: PGlite) {
       }
     }
   }
+
+  // Ensure API role (kayan_api) has privileges on the migrated `access` schema
+  // so bidirectional sync triggers fired during INSERT/UPDATE/DELETE succeed.
+  await db.exec(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'access')
+         AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kayan_api') THEN
+        GRANT USAGE ON SCHEMA access TO kayan_api;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA access TO kayan_api;
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA access TO kayan_api;
+      END IF;
+    END $$;
+  `);
 }
 
 /**
