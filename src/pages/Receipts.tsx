@@ -185,7 +185,64 @@ const ReceiptPrint: React.FC<{
         compact
       />
 
-      <div className="mt-6 space-y-4 text-xs leading-relaxed">
+      <div className="mt-6 space-y-6 text-xs leading-relaxed">
+          <!-- Header fields arranged in a two‑column grid -->
+          <div className="grid grid-cols-2 gap-4">
+            <!-- Left column -->
+            <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center gap-2">
+                <span className="w-28 font-bold text-slate-500">وصلنا من المكرم / السيد:</span>
+                <span className="text-sm font-black text-slate-900">{counterpartyDisplayName(receipt)}</span>
+                <span className="font-mono text-slate-400">({counterpartyTypeLabel(receipt)})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-28 font-bold text-slate-500">مبلغ وقدره:</span>
+                <span className="font-mono text-base font-black text-emerald-700">{amount.toLocaleString()} ريال يمني</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-28 font-bold text-slate-500">طريقة القبض:</span>
+                <span className="font-bold text-slate-800">{receipt.payment_method === 'CASH'
+                  ? 'نقداً إلى الصندوق والخزينة الرئيسية (1101)'
+                  : `شيك / حوالة بنكية إلى ${receipt.targetAccountName}`}</span>
+                {receipt.reference_number && (
+                  <span className="rounded border border-slate-200 bg-white px-2 py-0.5 font-mono text-slate-600">رقم المرجع: {receipt.reference_number}</span>
+                )}
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-28 shrink-0 font-bold text-slate-500">وذلك عن:</span>
+                <span className="flex-1 font-semibold text-slate-800">{receipt.description || 'سداد دفعات مبيعات وحسابات مدينة'}</span>
+              </div>
+            </div>
+            <!-- Right column – allocations table -->
+            <div className="space-y-1.5">
+              {allocations.length > 0 && (
+                <>
+                  <span className="block font-bold text-slate-700">الفواتير المسددة بموجب هذا السند:</span>
+                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                    <table className="w-full text-right text-xs">
+                      <thead className="bg-slate-100 font-bold text-slate-700">
+                        <tr>
+                          <th className="px-3 py-2">رقم الفاتورة</th>
+                          <th className="px-3 py-2">إجمالي الفاتورة</th>
+                          <th className="px-3 py-2 text-left">المبلغ المسدد بهذا السند</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-mono">
+                        {allocations.map((allocation, idx) => (
+                          <tr key={allocation.id || idx}>
+                            <td className="px-3 py-2 font-bold text-blue-600">{allocation.invoiceNumber}</td>
+                            <td className="px-3 py-2">{parseFloat(allocation.invoiceTotal || '0').toLocaleString()} ر.ي</td>
+                            <td className="px-3 py-2 text-left font-bold text-emerald-700">{Number(allocation.allocated_amount || 0).toLocaleString()} ر.ي</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="w-28 font-bold text-slate-500">وصلنا من المكرم / السيد:</span>
