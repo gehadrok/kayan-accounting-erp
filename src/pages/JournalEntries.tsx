@@ -870,7 +870,7 @@ export const JournalEntriesPage: React.FC = () => {
           )}
 
           {/* Voucher Header Card — Full Width 12-Col Grid */}
-          <Card
+          <Card className="border border-black"
             title="بيانات رأس القيد"
             description={isCreate ? 'المعلومات الأساسية للسند المحاسبي' : 'بيانات القيد المحفوظة (للقراءة فقط)'}
           >
@@ -932,7 +932,7 @@ export const JournalEntriesPage: React.FC = () => {
 
           {/* Full-Width Accounting Grid */}
           {isView ? (
-            <Card
+            <Card className="border border-black"
               flush
               title="جدول أطراف القيد المحاسبي"
               description={`${detailLines.length} سطر مسجّل`}
@@ -1008,7 +1008,7 @@ export const JournalEntriesPage: React.FC = () => {
               </div>
             </Card>
           ) : (
-            <Card
+            <Card className="border border-black"
               flush
               title="جدول أطراف القيد المحاسبي"
               description={`${lines.length} سطور — تنقّل بسرعة عبر لوحة المفاتيح`}
@@ -1597,7 +1597,7 @@ export const JournalEntriesPage: React.FC = () => {
       </div>
 
       {/* Journal Entries Table */}
-      <Card flush>
+      <Card className="border border-black" flush>
         <div className="overflow-x-auto">
           <table className="w-full text-right text-xs">
             <thead className="border-b border-line bg-surface-muted font-bold text-ink-muted">
